@@ -12,7 +12,9 @@
 
   let work = null, presets = [];
   const grid = $('#grid'), pop = $('#pop'), status = $('#status');
-  const workSel = $('#work'), presetSel = $('#preset'), modelSel = $('#model');
+  const workSel = $('#work'), presetSel = $('#preset'), modelSel = $('#model'), tempIn = $('#temp');
+  tempIn.value = localStorage.getItem('temp') || '1.0';
+  tempIn.onchange = () => localStorage.setItem('temp', tempIn.value);
 
   const setStatus = (t, err) => { status.textContent = t; status.classList.toggle('err', !!err); };
 
@@ -116,7 +118,7 @@
     try {
       const out = await api('/api/translate', { method: 'POST', body: {
         model: modelSel.value, preset: v.name, voices: v.voices, context: v.context,
-        sentence: sents[j], prev_ru, prev_en, next_ru, guidance } });
+        sentence: sents[j], prev_ru, prev_en, next_ru, guidance, temperature: +tempIn.value || 1 } });
       $('.thinking', box).outerHTML = ['A', 'B', 'C'].map(k =>
         `<button type="button" class="variant" data-k="${k}"><b>${k}</b>${esc(out[k])}</button>`).join('') +
         (out.glossary.length || out.rejected.length ? `<p class="glossary">${
@@ -146,17 +148,25 @@
     if (!ta.value.trim()) return;
     out.innerHTML = '<p class="thinking">checking</p>';
     try {
-      const { issues } = await api('/api/check', { method: 'POST', body: {
+      const { issues, notes, corrected } = await api('/api/check', { method: 'POST', body: {
         model: modelSel.value, text: ta.value, source: work.source[+row.dataset.i] } });
-      out.innerHTML = issues.length ? issues.map(i =>
-        `<button type="button" class="issue" data-q="${esc(i.quote)}" data-f="${esc(i.fix)}"><s>${esc(i.quote)}</s> → <b>${esc(i.fix)}</b><small>${esc(i.issue)}</small></button>`).join('')
+      out.innerHTML = issues.length
+        ? issues.map(i => `<button type="button" class="issue" data-start="${i.start}" data-q="${esc(i.quote)}" data-f="${esc(i.fix)}"><s>${esc(i.quote)}</s> → <b>${esc(i.fix)}</b></button>`).join('')
+          + `<p class="clean">${notes.map(esc).join(' · ')}</p><button type="button" class="apply-all">apply all</button>`
         : '<p class="clean">no issues found ·</p>';
+      const all = $('.apply-all', out);
+      if (all) all.onclick = () => { ta.value = corrected; out.innerHTML = ''; grow(ta); save(); };
     } catch (e) { out.innerHTML = `<p class="clean">${esc(e.message)}</p>`; }
   }
+  /* Apply one hunk: at its recorded offset if the text there still matches, else first occurrence. */
   function applyIssue(btn) {
-    const row = btn.closest('.row'), ta = $('textarea.tr', row);
-    if (!ta.value.includes(btn.dataset.q)) { btn.remove(); return; }
-    ta.value = ta.value.replace(btn.dataset.q, btn.dataset.f);
+    const row = btn.closest('.row'), ta = $('textarea.tr', row), q = btn.dataset.q, f = btn.dataset.f;
+    let at = +btn.dataset.start;
+    if (ta.value.slice(at, at + q.length) !== q) at = ta.value.indexOf(q);
+    if (at < 0) { btn.remove(); return; }
+    ta.value = ta.value.slice(0, at) + f + ta.value.slice(at + q.length);
+    const shift = f.length - q.length;
+    row.querySelectorAll('.issue').forEach(b => { if (+b.dataset.start > at) b.dataset.start = +b.dataset.start + shift; });
     btn.remove(); grow(ta); save();
   }
 

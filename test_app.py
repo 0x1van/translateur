@@ -26,11 +26,11 @@ class FakeOllama(BaseHTTPRequestHandler):
         system = body["messages"][0]["content"]
         user = body["messages"][1]["content"]
         if "copy editor" in system:
-            out = (
-                {"issues": [{"quote": "teh", "issue": "spelling", "fix": "the"}]}
-                if "teh" in user
-                else {"issues": []}
-            )
+            text = user.split("TO CHECK:\n")[1]
+            out = {
+                "corrected": text.replace("teh", "the"),
+                "notes": ["spelling"] if "teh" in text else [],
+            }
         else:
             sent = user.rsplit("<<< ", 1)[1].split(" >>>")[0]
             tag = " (glossed)" if "Glossary" in system else ""
@@ -98,6 +98,16 @@ def test_split_sentences_russian():
     ]
     assert appmod.split_sentences("т. е. так. Да.") == ["т. е. так.", "Да."]
     assert appmod.split_sentences("«Иди», — сказал он. «Нет».") == ["«Иди», — сказал он.", "«Нет»."]
+
+
+def test_hunks():
+    assert appmod.hunks("He were nine year old.", "He was nine years old.") == [
+        {"start": 3, "quote": "were", "fix": "was"},
+        {"start": 13, "quote": "year", "fix": "years"},
+    ]
+    assert appmod.hunks("a b", "a b") == []
+    assert appmod.hunks("the end", "the very end") == [{"start": 3, "quote": " ", "fix": " very "}]
+    assert appmod.hunks("end", "the end") == [{"start": 0, "quote": "end", "fix": "the end"}]
 
 
 def test_presets_parse_project_config():

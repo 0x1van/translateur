@@ -4,6 +4,7 @@ A *work* is a directory with `source.md` (Russian) and `translation.md` (English
 blocks paired by index — the same model as the website's /parallel/ view.
 """
 
+import difflib
 import json
 import os
 import re
@@ -221,13 +222,17 @@ def _schema(*keys: str) -> dict:
 TRANSLATE_SCHEMA = _schema("A", "B", "C")
 CHECK_SCHEMA = {
     "type": "object",
-    "properties": {"issues": {"type": "array", "items": _schema("quote", "issue", "fix")}},
-    "required": ["issues"],
+    "properties": {
+        "corrected": {"type": "string"},
+        "notes": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["corrected", "notes"],
 }
 
 
-async def ollama_json(model: str, system: str, user: str, schema: dict) -> dict:
+async def ollama_json(model: str, system: str, user: str, schema: dict, temperature: float) -> dict:
     payload = {
+        "options": {"temperature": temperature},
         "model": model,
         "stream": False,
         "format": schema,  # structured output; small models ignore the plain "json" mode
@@ -272,6 +277,7 @@ class TranslateReq(BaseModel):
     prev_en: str = ""
     next_ru: str = ""
     guidance: str = ""
+    temperature: float = 1.0
 
 
 @app.post("/api/translate")
@@ -282,7 +288,9 @@ async def translate(req: TranslateReq) -> dict:
         + (req.context + "\n\n" if req.context else "")
         + "Translate the given sentence three ways:\n"
         + "\n".join(f"{k}: {v}" for k, v in req.voices.items())
-        + "\n\nKeep the author's sentence length and structure; never split or merge sentences. "
+        + "\n\nThe three variants must differ noticeably from one another in wording and rhythm; "
+        "never repeat a phrasing across them. "
+        "Keep the author's sentence length and structure; never split or merge sentences. "
         "Translate only the sentence between <<< and >>>; everything else is context.\n"
         + (
             "Glossary (use these renderings): "
@@ -308,7 +316,7 @@ async def translate(req: TranslateReq) -> dict:
     if req.next_ru:
         user += f"Context — the next Russian sentence (do not translate): {req.next_ru}\n"
     user += f"\nTranslate ONLY the sentence between <<< and >>>, nothing else:\n<<< {req.sentence} >>>\n"
-    out = await ollama_json(req.model, system, user, TRANSLATE_SCHEMA)
+    out = await ollama_json(req.model, system, user, TRANSLATE_SCHEMA, req.temperature)
     return {k: str(out.get(k, "")).strip() for k in ("A", "B", "C")} | {
         "glossary": glossary,
         "rejected": rejected,
@@ -321,30 +329,43 @@ class CheckReq(BaseModel):
     source: str = ""
 
 
+def hunks(original: str, corrected: str) -> list[dict]:
+    """Minimal word-level replacements turning original into corrected, with offsets."""
+    a = re.findall(r"\S+|\s+", original)
+    b = re.findall(r"\S+|\s+", corrected)
+    pos = [0]
+    for tok in a:
+        pos.append(pos[-1] + len(tok))
+    out = []
+    for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
+        if op == "equal":
+            continue
+        if i1 == i2:  # pure insertion: anchor on the preceding token (or the next, at start)
+            if i1 > 0:
+                i1, j1 = i1 - 1, j1 - 1
+            else:
+                i2, j2 = i2 + 1, j2 + 1
+        out.append({"start": pos[i1], "quote": "".join(a[i1:i2]), "fix": "".join(b[j1:j2])})
+    return out
+
+
 @app.post("/api/check")
 async def check(req: CheckReq) -> dict:
     system = (
-        "You are a meticulous copy editor for British English literary prose. Report only "
-        "spelling, grammar, agreement, tense and punctuation errors. Do not rewrite style, "
-        "word choice or rhythm. Quote the exact erroneous substring verbatim. "
-        'Reply with JSON only: {"issues": [{"quote": "...", "issue": "...", "fix": "..."}]} '
-        "— an empty list if the text is clean."
+        "You are a meticulous copy editor for British English literary prose. Correct only "
+        "spelling, grammar, agreement, tense and punctuation errors. Do not touch style, word "
+        "choice, rhythm or punctuation the author may have chosen deliberately (em-dashes, "
+        "ellipses). Return the full text with only those corrections applied — identical to the "
+        "input if it is clean — plus one short note per correction. "
+        'Reply with JSON only: {"corrected": "...", "notes": ["..."]}'
     )
     user = (
         f"RUSSIAN ORIGINAL (context only):\n{req.source}\n\n" if req.source else ""
     ) + f"ENGLISH TEXT TO CHECK:\n{req.text}"
-    out = await ollama_json(req.model, system, user, CHECK_SCHEMA)
-    issues = [i for i in out.get("issues", []) if isinstance(i, dict) and i.get("quote")]
-    return {
-        "issues": [
-            {
-                "quote": str(i["quote"]),
-                "issue": str(i.get("issue", "")),
-                "fix": str(i.get("fix", "")),
-            }
-            for i in issues
-        ]
-    }
+    out = await ollama_json(req.model, system, user, CHECK_SCHEMA, 0.2)
+    corrected = str(out.get("corrected", req.text)).strip("\n") or req.text
+    notes = [str(n) for n in out.get("notes", []) if n]
+    return {"corrected": corrected, "issues": hunks(req.text, corrected), "notes": notes}
 
 
 # ---------- dictionary / thesaurus ----------
