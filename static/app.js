@@ -8,22 +8,39 @@
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
     return r.json();
   };
-  const esc = s => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  /* "freedom" = sampling temperature with a name the translator can reason about. */
+  const FREEDOM = { strict: 0.3, measured: 0.7, free: 1.0, wild: 1.3 };
+  const DEFAULT_FREEDOM = { A: 'strict', B: 'measured', C: 'wild' };
 
   let work = null, presets = [];
-  const grid = $('#grid'), pop = $('#pop'), status = $('#status');
-  const workSel = $('#work'), presetSel = $('#preset'), modelSel = $('#model'), tempIn = $('#temp');
-  tempIn.value = localStorage.getItem('temp') || '1.0';
-  tempIn.onchange = () => localStorage.setItem('temp', tempIn.value);
+  const grid = $('#grid'), pop = $('#pop'), status = $('#status'), worksList = $('#works');
+  const presetSel = $('#preset'), modelSel = $('#model');
 
   const setStatus = (t, err) => { status.textContent = t; status.classList.toggle('err', !!err); };
+
+  // ---------- theme ----------
+  const themeBtn = $('#theme-btn');
+  const systemDark = () => matchMedia('(prefers-color-scheme: dark)').matches;
+  function applyTheme(t) {
+    if (t) document.documentElement.setAttribute('data-theme', t); else document.documentElement.removeAttribute('data-theme');
+    themeBtn.textContent = (t || (systemDark() ? 'dark' : 'light')) === 'dark' ? 'light' : 'dark';
+  }
+  themeBtn.onclick = () => {
+    const cur = document.documentElement.getAttribute('data-theme') || (systemDark() ? 'dark' : 'light');
+    const next = cur === 'dark' ? 'light' : 'dark';
+    localStorage.setItem('theme', next); applyTheme(next);
+  };
+  applyTheme(localStorage.getItem('theme'));
 
   // ---------- voices (preset + per-browser overrides) ----------
   const voiceKey = name => 'voices:' + name;
   function currentVoice() {
     const p = presets.find(p => p.name === presetSel.value) || presets[0];
     const saved = JSON.parse(localStorage.getItem(voiceKey(p.name)) || 'null');
-    return { name: p.name, voices: saved?.voices || p.voices, context: saved?.context ?? p.context };
+    return { name: p.name, voices: saved?.voices || p.voices, context: saved?.context ?? p.context,
+      freedom: { ...DEFAULT_FREEDOM, ...(saved?.freedom || {}) } };
   }
 
   // ---------- boot ----------
@@ -41,13 +58,14 @@
     } catch (e) { setStatus(e.message, true); }
     await refreshWorks();
     const slug = new URLSearchParams(location.search).get('work') || localStorage.getItem('work');
-    if (slug && [...workSel.options].some(o => o.value === slug)) { workSel.value = slug; await openWork(slug); }
+    if (slug && worksList.querySelector(`[data-slug="${CSS.escape(slug)}"]`)) await openWork(slug);
   }
   async function refreshWorks() {
     const works = await api('/api/works');
-    workSel.innerHTML = '<option value="">—</option>' + works.map(w => `<option>${esc(w)}</option>`).join('');
+    worksList.innerHTML = works.map(w => `<li><button type="button" class="work-item" data-slug="${esc(w)}">${esc(w)}</button></li>`).join('')
+      || '<li class="clean">none yet ·</li>';
   }
-  workSel.onchange = () => workSel.value && openWork(workSel.value);
+  worksList.addEventListener('click', e => { const b = e.target.closest('.work-item'); if (b) openWork(b.dataset.slug); });
 
   // ---------- render ----------
   const tokenise = s => s.replace(/[А-Яа-яЁёA-Za-z][А-Яа-яЁёA-Za-z-]*/g, m => `<span class="w">${m}</span>`);
@@ -55,6 +73,7 @@
     work = await api('/api/works/' + slug);
     localStorage.setItem('work', slug);
     history.replaceState(null, '', '?work=' + slug);
+    worksList.querySelectorAll('.work-item').forEach(b => b.classList.toggle('active', b.dataset.slug === slug));
     let n = 0;
     grid.innerHTML = work.source.map((block, i) => `
       <div class="row" id="p${i}" data-i="${i}">
@@ -115,12 +134,13 @@
     $('.again', box).onclick = () => translateSentence(sent, $('.guidance', box).value);
     $('.guidance', box).onkeydown = ev => { if (ev.key === 'Enter') translateSentence(sent, ev.target.value); };
     const v = currentVoice();
+    const freedom = Object.fromEntries(Object.entries(v.freedom).map(([k, name]) => [k, FREEDOM[name] ?? FREEDOM.free]));
     try {
       const out = await api('/api/translate', { method: 'POST', body: {
-        model: modelSel.value, preset: v.name, voices: v.voices, context: v.context,
-        sentence: sents[j], prev_ru, prev_en, next_ru, guidance, temperature: +tempIn.value || 1 } });
+        model: modelSel.value, preset: v.name, voices: v.voices, context: v.context, freedom,
+        sentence: sents[j], prev_ru, prev_en, next_ru, guidance } });
       $('.thinking', box).outerHTML = ['A', 'B', 'C'].map(k =>
-        `<button type="button" class="variant" data-k="${k}"><b>${k}</b>${esc(out[k])}</button>`).join('') +
+        `<button type="button" class="variant" data-k="${k}"><b>${k}</b><small>${esc((v.voices[k] || '').split(':')[0])} · ${esc(v.freedom[k])}</small>${esc(out[k])}</button>`).join('') +
         (out.glossary.length || out.rejected.length ? `<p class="glossary">${
           out.glossary.map(g => `${esc(g.ru)} → ${esc(g.en)}`).join(' · ')}${
           out.rejected.map(r => ` · not “${esc(r.en)}”`).join('')}</p>` : '');
@@ -148,14 +168,15 @@
     if (!ta.value.trim()) return;
     out.innerHTML = '<p class="thinking">checking</p>';
     try {
-      const { issues, notes, corrected } = await api('/api/check', { method: 'POST', body: {
+      const res = await api('/api/check', { method: 'POST', body: {
         model: modelSel.value, text: ta.value, source: work.source[+row.dataset.i] } });
+      const issues = res.issues || [], notes = res.notes || [];
       out.innerHTML = issues.length
         ? issues.map(i => `<button type="button" class="issue" data-start="${i.start}" data-q="${esc(i.quote)}" data-f="${esc(i.fix)}"><s>${esc(i.quote)}</s> → <b>${esc(i.fix)}</b></button>`).join('')
           + `<p class="clean">${notes.map(esc).join(' · ')}</p><button type="button" class="apply-all">apply all</button>`
         : '<p class="clean">no issues found ·</p>';
       const all = $('.apply-all', out);
-      if (all) all.onclick = () => { ta.value = corrected; out.innerHTML = ''; grow(ta); save(); };
+      if (all) all.onclick = () => { ta.value = res.corrected; out.innerHTML = ''; grow(ta); save(); };
     } catch (e) { out.innerHTML = `<p class="clean">${esc(e.message)}</p>`; }
   }
   /* Apply one hunk: at its recorded offset if the text there still matches, else first occurrence. */
@@ -200,9 +221,9 @@
     const a = ta.selectionStart, b = ta.selectionEnd, x = e.pageX, y = e.pageY;
     try {
       const t = await api('/api/thesaurus?word=' + encodeURIComponent(sel.trim()));
-      showPop(`<h4>${esc(t.word)}</h4><span class="tag">thesaurus · click to replace</span>` +
-        (t.synonyms.length ? t.synonyms.slice(0, 80).map(s => `<button type="button" class="syn">${esc(s)}</button>`).join('')
-          : '<p class="none">no synonyms ·</p>'), x, y);
+      showPop(`<h4>${esc(t.word)}</h4><span class="tag">related words (Moby) · click to replace</span>` +
+        (t.synonyms.length ? t.synonyms.slice(0, 120).map(s => `<button type="button" class="syn">${esc(s)}</button>`).join(' ')
+          : '<p class="none">no entry ·</p>'), x, y);
       pop.querySelectorAll('.syn').forEach(btn => btn.onclick = () => {
         ta.setRangeText(btn.textContent, a, b, 'select'); ta.focus(); grow(ta); save(); pop.hidden = true;
       });
@@ -210,7 +231,10 @@
   });
 
   // ---------- dialogs ----------
-  const newDlg = $('#new-dialog'), voicesDlg = $('#voices-dialog');
+  const newDlg = $('#new-dialog'), voicesDlg = $('#voices-dialog'), voicesForm = $('#voices-form');
+  for (const k of ['A', 'B', 'C']) {
+    voicesForm.elements[k + '_freedom'].innerHTML = Object.entries(FREEDOM).map(([n, t]) => `<option value="${n}">${n} · ${t}</option>`).join('');
+  }
   $('#new-btn').onclick = () => { $('#new-form').reset(); newDlg.showModal(); };
   document.querySelectorAll('dialog .cancel').forEach(b => b.onclick = () => b.closest('dialog').close('cancel'));
   $('#new-form').onsubmit = async e => {
@@ -218,21 +242,22 @@
     const f = new FormData(e.target);
     try {
       await api('/api/works', { method: 'POST', body: { slug: f.get('slug'), source: f.get('source') } });
-      newDlg.close(); await refreshWorks(); workSel.value = f.get('slug'); await openWork(f.get('slug'));
+      newDlg.close(); await refreshWorks(); await openWork(f.get('slug'));
     } catch (err) { setStatus(err.message, true); }
   };
   $('#voices-btn').onclick = () => {
-    const v = currentVoice(), f = $('#voices-form');
-    for (const k of ['A', 'B', 'C']) f.elements[k].value = v.voices[k];
-    f.elements.context.value = v.context;
+    const v = currentVoice();
+    for (const k of ['A', 'B', 'C']) { voicesForm.elements[k].value = v.voices[k]; voicesForm.elements[k + '_freedom'].value = v.freedom[k]; }
+    voicesForm.elements.context.value = v.context;
     voicesDlg.showModal();
   };
-  $('#voices-form .reset').onclick = () => { localStorage.removeItem(voiceKey(presetSel.value)); voicesDlg.close(); };
-  $('#voices-form').onsubmit = e => {
+  $('.reset', voicesForm).onclick = () => { localStorage.removeItem(voiceKey(presetSel.value)); voicesDlg.close(); };
+  voicesForm.onsubmit = e => {
     e.preventDefault();
-    const f = e.target;
+    const f = e.target.elements, pick = k => ({ voice: f[k].value, freedom: f[k + '_freedom'].value });
+    const A = pick('A'), B = pick('B'), C = pick('C');
     localStorage.setItem(voiceKey(presetSel.value), JSON.stringify({
-      voices: { A: f.elements.A.value, B: f.elements.B.value, C: f.elements.C.value }, context: f.elements.context.value }));
+      voices: { A: A.voice, B: B.voice, C: C.voice }, freedom: { A: A.freedom, B: B.freedom, C: C.freedom }, context: f.context.value }));
     voicesDlg.close();
   };
 

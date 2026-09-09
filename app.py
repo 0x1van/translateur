@@ -4,6 +4,7 @@ A *work* is a directory with `source.md` (Russian) and `translation.md` (English
 blocks paired by index — the same model as the website's /parallel/ view.
 """
 
+import asyncio
 import difflib
 import json
 import os
@@ -30,6 +31,7 @@ DEFAULT_VOICES = {
     "B": "Literary British English: faithful, precise, unshowy; keeps sentence length and rhythm.",
     "C": "Alternative literary phrasing: a different cadence or subtler word, same register.",
 }
+DEFAULT_FREEDOM = {"A": 0.3, "B": 0.7, "C": 1.3}  # sampling temperature per voice
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 _BOUNDARY_RE = re.compile(r'([.!?…]["»”)]*)\s+(?=[«"“(]?[A-ZА-ЯЁ]|[—–-]\s+[«"“(]?[A-ZА-ЯЁ])')
 
@@ -219,7 +221,7 @@ def _schema(*keys: str) -> dict:
     }
 
 
-TRANSLATE_SCHEMA = _schema("A", "B", "C")
+VARIANT_SCHEMA = _schema("text")
 CHECK_SCHEMA = {
     "type": "object",
     "properties": {
@@ -271,26 +273,24 @@ class TranslateReq(BaseModel):
     model: str
     preset: str = "plain"
     voices: dict[str, str] = DEFAULT_VOICES
+    freedom: dict[str, float] = DEFAULT_FREEDOM
     context: str = ""
     sentence: str
     prev_ru: str = ""
     prev_en: str = ""
     next_ru: str = ""
     guidance: str = ""
-    temperature: float = 1.0
 
 
 @app.post("/api/translate")
 async def translate(req: TranslateReq) -> dict:
+    """One model call per voice, in parallel, each at its own temperature. The shared system
+    prompt comes first so Ollama's prefix cache serves all three."""
     glossary, rejected = glossary_for(req.preset, req.sentence)
     system = (
         "You are a literary translator from Russian into British English.\n\n"
         + (req.context + "\n\n" if req.context else "")
-        + "Translate the given sentence three ways:\n"
-        + "\n".join(f"{k}: {v}" for k, v in req.voices.items())
-        + "\n\nThe three variants must differ noticeably from one another in wording and rhythm; "
-        "never repeat a phrasing across them. "
-        "Keep the author's sentence length and structure; never split or merge sentences. "
+        + "Keep the author's sentence length and structure; never split or merge sentences. "
         "Translate only the sentence between <<< and >>>; everything else is context.\n"
         + (
             "Glossary (use these renderings): "
@@ -305,7 +305,7 @@ async def translate(req: TranslateReq) -> dict:
             else ""
         )
         + (f"Additional guidance from the translator: {req.guidance}\n" if req.guidance else "")
-        + 'Reply with JSON only: {"A": "...", "B": "...", "C": "..."}'
+        + 'Reply with JSON only: {"text": "..."}'
     )
     # ponytail: target goes last, inside delimiters — small models otherwise translate NEXT too
     user = ""
@@ -316,8 +316,19 @@ async def translate(req: TranslateReq) -> dict:
     if req.next_ru:
         user += f"Context — the next Russian sentence (do not translate): {req.next_ru}\n"
     user += f"\nTranslate ONLY the sentence between <<< and >>>, nothing else:\n<<< {req.sentence} >>>\n"
-    out = await ollama_json(req.model, system, user, TRANSLATE_SCHEMA, req.temperature)
-    return {k: str(out.get(k, "")).strip() for k in ("A", "B", "C")} | {
+
+    async def one(k: str) -> tuple[str, str]:
+        voice = req.voices.get(k) or DEFAULT_VOICES[k]
+        out = await ollama_json(
+            req.model,
+            system,
+            user + f"\nVoice {k} — render it in this voice: {voice}",
+            VARIANT_SCHEMA,
+            req.freedom.get(k, DEFAULT_FREEDOM[k]),
+        )
+        return k, str(out.get("text", "")).strip()
+
+    return dict(await asyncio.gather(*(one(k) for k in "ABC"))) | {
         "glossary": glossary,
         "rejected": rejected,
     }
@@ -355,7 +366,7 @@ async def check(req: CheckReq) -> dict:
         "You are a meticulous copy editor for British English literary prose. Correct only "
         "spelling, grammar, agreement, tense and punctuation errors. Do not touch style, word "
         "choice, rhythm or punctuation the author may have chosen deliberately (em-dashes, "
-        "ellipses). Return the full text with only those corrections applied — identical to the "
+        "ellipses). Never add, remove or reorder sentences. Return the full text with only those corrections applied — identical to the "
         "input if it is clean — plus one short note per correction. "
         'Reply with JSON only: {"corrected": "...", "notes": ["..."]}'
     )
@@ -388,6 +399,15 @@ def thesaurus(word: str) -> dict:
 
 
 # ---------- ui ----------
+
+
+@app.middleware("http")
+async def no_cache_ui(request, call_next):
+    """The UI is tiny and edited often; never let the browser keep a stale copy."""
+    resp = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/static"):
+        resp.headers["Cache-Control"] = "no-cache"
+    return resp
 
 
 @app.get("/")

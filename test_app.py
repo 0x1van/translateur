@@ -33,8 +33,9 @@ class FakeOllama(BaseHTTPRequestHandler):
             }
         else:
             sent = user.rsplit("<<< ", 1)[1].split(" >>>")[0]
-            tag = " (glossed)" if "Glossary" in system else ""
-            out = {"A": f"A of {sent}{tag}", "B": f"B of {sent}", "C": f"C of {sent}"}
+            k = user.rsplit("Voice ", 1)[1][0]
+            tag = " (glossed)" if "Glossary" in system and k == "A" else ""
+            out = {"text": f"{k} of {sent}{tag}"}
         self._send({"message": {"content": json.dumps(out)}})
 
     def _send(self, obj):
@@ -168,6 +169,8 @@ def test_e2e(page, server_url):
     page.wait_for_selector(".variant")
     variants = page.locator(".variant").all_inner_texts()
     assert variants[0].endswith("A of Он сидел у окна. (glossed)")  # glossary reached the prompt
+    assert "strict" in variants[0] and "wild" in variants[2]  # per-voice freedom labels
+    assert page.locator("#works .work-item.active").inner_text() == "demo-work"
     assert page.locator(".variants .glossary").inner_text().startswith("окно → window")
     page.locator(".variant[data-k=B]").click()
     ta = page.locator(".row").nth(0).locator("textarea.tr")
