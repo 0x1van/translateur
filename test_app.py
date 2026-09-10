@@ -347,6 +347,7 @@ def test_e2e(page, server_url):
         .startswith("B of Он сидел у окна. C of")
     )
 
+    page.keyboard.press("Escape")  # leave the edit mode the variant clicks kept us in
     # the english cell is a rendered view until clicked; then a textarea (free writing)
     en0 = page.locator(".row").nth(0).locator("p.en")
     assert en0.locator(".w").first.inner_text() == "B"
