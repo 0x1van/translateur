@@ -192,9 +192,17 @@ def test_e2e(page, server_url):
         .startswith("B of Он сидел у окна. C of")
     )
 
-    # free writing + grammar check + apply fix
+    # the english cell is a rendered view until clicked; then a textarea (free writing)
+    assert page.locator(".row").nth(0).locator("p.en .w").first.inner_text() == "B"
+    en2 = page.locator(".row").nth(2).locator("p.en")
     ta2 = page.locator(".row").nth(2).locator("textarea.tr")
+    assert ta2.is_hidden()
+    en2.click()
+    assert ta2.is_visible() and page.evaluate("document.activeElement.matches('textarea.tr')")
     ta2.fill("teh end.")
+    page.keyboard.press("Escape")  # leaves editing → view re-renders
+    assert ta2.is_hidden() and en2.inner_text() == "teh end."
+    # grammar check + apply fix
     page.locator(".row").nth(2).locator(".check").click()
     page.wait_for_selector(".issue")
     page.locator(".issue").click()
@@ -210,29 +218,36 @@ def test_e2e(page, server_url):
     if HAVE_DATA:
         # russian pane: click a word → dictionary + ru near-synonyms; click a translation to insert
         ta0 = page.locator(".row").nth(0).locator("textarea.tr")
+        en0 = page.locator(".row").nth(0).locator("p.en")
+        b0 = en0.bounding_box()
+        en0.click(position={"x": b0["width"] - 2, "y": b0["height"] - 4})  # past the text → edit
         ta0.fill("")
+        page.keyboard.press("Escape")
         page.locator(".row").nth(0).locator(".w", has_text="окна").click()
         page.wait_for_selector("#pop h4")
         assert page.locator("#pop h4").inner_text() == "окно"
         assert "окошко" in page.locator("#pop section span.syn").all_inner_texts()
         page.locator("#pop button.syn", has_text="window").first.click()
         assert ta0.input_value() == "window" and page.locator("#pop").is_hidden()
-        # english pane: a real mouse click inside a word opens alternatives (llm) + Moby
+        # english view: hover-able words; click one → alternatives (llm) + Moby
+        en2.click()
         ta2.fill("the window.")
-        box = ta2.bounding_box()
-        page.mouse.click(box["x"] + 4, box["y"] + 12)  # lands in "the"
+        page.keyboard.press("Escape")
+        assert en2.locator(".w").all_inner_texts() == ["the", "window"]
+        en2.locator(".w", has_text="the").click()
         page.wait_for_selector("#pop .alts .syn")
         assert page.locator("#pop h4").inner_text() == "the"
         assert page.locator("#pop .alts .syn").all_inner_texts() == ["other the", "bold the"]
-        # select a word → same popover; Moby chip replaces the selection
-        ta2.evaluate("t => { t.focus(); t.setSelectionRange(4, 10); }")
-        ta2.dispatch_event("mouseup")
+        page.keyboard.press("Escape")
+        en2.locator(".w", has_text="window").click()
         page.wait_for_selector("#pop .moby .syn")
-        assert page.locator("#pop h4").inner_text() == "window"
         page.locator("#pop .moby .syn", has_text="casement").first.click()
         assert ta2.input_value() == "the casement."
-        # caret inside a word (no selection), synthetic mouseup; an llm chip replaces the word
-        ta2.evaluate("t => { t.focus(); t.setSelectionRange(6, 6); }")
+        page.wait_for_function("document.querySelector('#status').textContent.startsWith('saved')")
+        assert en2.inner_text() == "the casement."
+        # while editing: caret inside a word + mouseup also opens it; an llm chip replaces the word
+        en2.click()
+        ta2.evaluate("t => t.setSelectionRange(6, 6)")
         ta2.dispatch_event("mouseup")
         page.wait_for_selector("#pop .alts .syn")
         assert page.locator("#pop h4").inner_text() == "casement"

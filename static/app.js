@@ -79,13 +79,31 @@
         <div class="cell src" lang="ru"><p>${work.sentences[i].map((s, j) =>
           `<span class="sent" data-j="${j}"><sup class="n" title="translate this sentence" role="button" tabindex="0">${++n}</sup>${tokenise(esc(s))}</span>`).join(' ')}</p>
           <div class="variants" hidden></div></div>
-        <div class="cell tr"><textarea class="tr" lang="en-GB" spellcheck="true" placeholder="…"></textarea>
+        <div class="cell tr"><p class="en" lang="en-GB" title="click a word to look it up · click elsewhere to edit"></p><textarea class="tr" lang="en-GB" spellcheck="true" placeholder="…"></textarea>
           <div class="tools"><button type="button" class="check">check grammar</button></div><div class="issues"></div></div>
       </div>`).join('');
-    grid.querySelectorAll('textarea.tr').forEach((ta, i) => { ta.value = work.translation[i]; grow(ta); });
+    grid.querySelectorAll('.cell.tr').forEach((cell, i) => { $('textarea.tr', cell).value = work.translation[i]; view(cell); });
     setStatus('');
   }
   const grow = ta => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; };
+
+  /* The English cell is a rendered view (hoverable words, like the Russian) until you edit it;
+     then it is the textarea. Every piece carries its offset so a click can place the caret. */
+  const EN_TOK = /[A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё'’-]*|[^A-Za-zА-Яа-яЁё]+/g;
+  function view(cell) {
+    const v = $('textarea.tr', cell).value;
+    $('p.en', cell).innerHTML = v ? [...v.matchAll(EN_TOK)].map(m =>
+      `<span${/^[A-Za-zА-Яа-яЁё]/.test(m[0]) ? ' class="w"' : ''} data-a="${m.index}">${esc(m[0])}</span>`).join('')
+      : '<span class="ph" data-a="0">…</span>';
+  }
+  function edit(cell, at) {
+    const ta = $('textarea.tr', cell);
+    cell.classList.add('editing'); pop.hidden = true; grow(ta);
+    at = at ?? ta.value.length; ta.setSelectionRange(at, at); ta.focus();
+  }
+  grid.addEventListener('focusout', e => {
+    if (e.target.matches('textarea.tr')) { const c = e.target.closest('.cell.tr'); c.classList.remove('editing'); view(c); }
+  });
 
   // ---------- save ----------
   let saveTimer;
@@ -94,6 +112,7 @@
     setStatus('saving…');
     saveTimer = setTimeout(async () => {
       work.translation = [...grid.querySelectorAll('textarea.tr')].map(t => t.value);
+      grid.querySelectorAll('.cell.tr:not(.editing)').forEach(view);
       try { await api('/api/works/' + work.slug, { method: 'PUT', body: { translation: work.translation } }); setStatus('saved ·'); }
       catch (e) { setStatus(e.message, true); }
     }, 700);
@@ -104,6 +123,14 @@
   grid.addEventListener('click', e => {
     const n = e.target.closest('.n');
     if (n) return translateSentence(n.closest('.sent'));
+    const en = e.target.closest('p.en');
+    if (en) {
+      const cell = en.closest('.cell.tr'), ta = $('textarea.tr', cell), w = e.target.closest('.w');
+      if (w) { ta.setSelectionRange(+w.dataset.a, +w.dataset.a + w.textContent.length); return wordPop(ta, e.pageX, e.pageY); }
+      const r = document.caretPositionFromPoint?.(e.clientX, e.clientY) || document.caretRangeFromPoint?.(e.clientX, e.clientY);
+      const node = r?.offsetNode || r?.startContainer, span = node?.parentElement?.closest('[data-a]');
+      return edit(cell, span && !span.matches('.ph') ? +span.dataset.a + (r.offset ?? r.startOffset) : undefined);
+    }
     const w = e.target.closest('.w');
     if (w) return showDictionary(w);
     const chk = e.target.closest('.check');
@@ -158,7 +185,7 @@
       ta.value = cur ? cur + ' ' + text : text;
       ta.setSelectionRange(ta.value.length, ta.value.length);
     }
-    ta.focus(); grow(ta); save();
+    grow(ta); save();
   }
 
   // ---------- grammar ----------
@@ -197,7 +224,11 @@
     pop.style.left = Math.max(8, left) + 'px'; pop.style.top = (y + 6) + 'px';
   }
   document.addEventListener('mousedown', e => { if (!pop.contains(e.target)) pop.hidden = true; });
-  document.addEventListener('keydown', e => { if (e.key === 'Escape') pop.hidden = true; });
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    if (pop.hidden && document.activeElement?.matches('textarea.tr')) document.activeElement.blur();
+    pop.hidden = true;
+  });
 
   const chips = (list, tag = 'button') => list.map(s => `<${tag} type="button" class="syn">${esc(s)}</${tag}>`).join(' ');
 
@@ -220,7 +251,7 @@
     } catch (e) { showPop(`<p class="none">${esc(e.message)}</p>`, x, y); }
   }
 
-  /* English pane, DeepL-style: click inside a word or select a phrase → the model's
+  /* English pane, DeepL-style: click a word in the view, or click inside / select in the textarea → the model's
      alternatives for that span (sampled wild) + Moby's related words; click any to swap it in. */
   let altCtl;
   grid.addEventListener('mouseup', e => { const ta = e.target.closest('textarea.tr'); if (ta) wordPop(ta, e.pageX, e.pageY); });
@@ -236,7 +267,7 @@
     const alts = $('.alts', pop), moby = $('.moby', pop);
     pop.onclick = ev => {
       const s = ev.target.closest('.syn');
-      if (s) { ta.setRangeText(s.textContent, a, b, 'select'); ta.focus(); grow(ta); save(); pop.hidden = true; }
+      if (s) { ta.setRangeText(s.textContent, a, b, 'select'); grow(ta); save(); pop.hidden = true; }
     };
     if (!/\s/.test(term)) api('/api/thesaurus?word=' + encodeURIComponent(term)).then(t => {
       if (t.synonyms.length) moby.innerHTML = '<span class="tag">related words (Moby)</span>' + chips(t.synonyms.slice(0, 80));

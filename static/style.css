@@ -89,9 +89,11 @@ textarea.tr {
   width: 100%; border: 0; border-bottom: 1px dotted var(--color-border); background: transparent;
   resize: none; overflow: hidden; padding: 0 0 var(--space-xs); line-height: 1.7; min-height: 2.2rem;
 }
-textarea.tr:not(:focus) { cursor: help; }  /* same "?" as the Russian words: click a word to look it up */
 textarea.tr:focus { outline: none; border-bottom-color: var(--color-accent-dim); }
 textarea.tr::placeholder { color: var(--color-border); font-style: italic; }
+.cell.tr p.en { white-space: pre-wrap; min-height: 2.2rem; cursor: text; border-bottom: 1px dotted var(--color-border); padding-bottom: var(--space-xs); }
+.cell.tr p.en .ph { color: var(--color-border); font-style: italic; }
+.cell.tr:not(.editing) textarea.tr, .cell.tr.editing p.en { display: none; }
 .tools { display: flex; gap: var(--space-sm); margin-top: var(--space-xs); }
 .tools button { border-color: transparent; color: var(--color-text-muted); padding-left: 0; }
 .issues { font-size: 0.9rem; }
