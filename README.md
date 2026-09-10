@@ -32,4 +32,5 @@ uv run uvicorn app:app --reload    # http://127.0.0.1:8000
 Env: `OLLAMA_URL` (default `http://localhost:11434`), `WORKS_DIR`, `PROJECTS_DIR`.
 
 Tests: `uv run python -m playwright install chromium chromium-headless-shell` once, then
-`uv run pytest`. The e2e test runs against a fake Ollama.
+`uv run pytest`. The e2e test runs against a fake Ollama. `uv run python qa_live.py` is the slow
+end-to-end sweep against the real model (32 scenarios, own servers, throwaway copy of works/).
