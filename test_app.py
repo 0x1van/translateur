@@ -194,7 +194,10 @@ def test_e2e(page, server_url):
     )
 
     # the english cell is a rendered view until clicked; then a textarea (free writing)
-    assert page.locator(".row").nth(0).locator("p.en .w").first.inner_text() == "B"
+    en0 = page.locator(".row").nth(0).locator("p.en")
+    assert en0.locator(".w").first.inner_text() == "B"
+    assert en0.locator(".n").all_inner_texts() == ["1", "2"]  # numbered like the russian
+    assert not en0.evaluate("p => p.classList.contains('off')")  # 2 sentences vs 2: aligned
     en2 = page.locator(".row").nth(2).locator("p.en")
     ta2 = page.locator(".row").nth(2).locator("textarea.tr")
     assert ta2.is_hidden()
@@ -202,7 +205,16 @@ def test_e2e(page, server_url):
     assert ta2.is_visible() and page.evaluate("document.activeElement.matches('textarea.tr')")
     ta2.fill("teh end.")
     page.keyboard.press("Escape")  # leaves editing → view re-renders
-    assert ta2.is_hidden() and en2.inner_text() == "teh end."
+    assert ta2.is_hidden() and en2.inner_text() == "5teh end."  # numbered 5, in step with the left
+    assert not en2.evaluate("p => p.classList.contains('off')")  # 1 sentence vs "Конец.": aligned
+    en2.click()
+    ta2.fill("teh end. Really.")
+    page.keyboard.press("Escape")
+    assert en2.locator(".n").all_inner_texts() == ["5", "6"]
+    assert en2.evaluate("p => p.classList.contains('off')")  # 2 sentences vs 1: flagged
+    en2.click()
+    ta2.fill("teh end.")
+    page.keyboard.press("Escape")
     # grammar check + apply fix
     page.locator(".row").nth(2).locator(".check").click()
     page.wait_for_selector(".issue")
@@ -220,7 +232,6 @@ def test_e2e(page, server_url):
     if HAVE_DATA:
         # russian pane: click a word → dictionary + ru near-synonyms; click a translation to insert
         ta0 = page.locator(".row").nth(0).locator("textarea.tr")
-        en0 = page.locator(".row").nth(0).locator("p.en")
         b0 = en0.bounding_box()
         en0.click(position={"x": b0["width"] - 2, "y": b0["height"] - 4})  # past the text → edit
         ta0.fill("")
@@ -246,7 +257,7 @@ def test_e2e(page, server_url):
         page.locator("#pop .moby .syn", has_text="casement").first.click()
         assert ta2.input_value() == "the casement."
         page.wait_for_function("document.querySelector('#status').textContent.startsWith('saved')")
-        assert en2.inner_text() == "the casement."
+        assert en2.inner_text() == "5the casement."
         # while editing: caret inside a word + mouseup also opens it; an llm chip replaces the word
         en2.click()
         ta2.evaluate("t => t.setSelectionRange(6, 6)")

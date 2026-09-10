@@ -82,6 +82,9 @@ select, input { border: 1px solid var(--color-border); background: var(--color-b
   cursor: pointer; margin-right: 0.25em; padding: 0 0.15em; vertical-align: super; line-height: 0;
 }
 .n:hover { color: var(--color-text); background: var(--color-accent); }
+.n.en { cursor: default; }
+.n.en:hover { color: var(--color-text-muted); background: none; }
+.off .n.en { color: var(--color-error); }
 .w { cursor: help; }
 .w:hover { border-bottom: 1px dotted var(--color-accent-dim); }
 

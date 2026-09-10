@@ -75,7 +75,7 @@
     worksList.querySelectorAll('.work-item').forEach(b => b.classList.toggle('active', b.dataset.slug === slug));
     let n = 0;
     grid.innerHTML = work.source.map((block, i) => `
-      <div class="row" id="p${i}" data-i="${i}">
+      <div class="row" id="p${i}" data-i="${i}" data-n0="${n + 1}">
         <div class="cell src" lang="ru"><p>${work.sentences[i].map((s, j) =>
           `<span class="sent" data-j="${j}"><sup class="n" title="translate this sentence" role="button" tabindex="0">${++n}</sup>${tokenise(esc(s))}</span>`).join(' ')}</p>
           <div class="variants" hidden></div></div>
@@ -90,11 +90,21 @@
   /* The English cell is a rendered view (hoverable words, like the Russian) until you edit it;
      then it is the textarea. Every piece carries its offset so a click can place the caret. */
   const EN_TOK = /[A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё'’-]*|[^A-Za-zА-Яа-яЁё]+/g;
+  const EN_BOUND = /([.!?…]["»”)]*)\s+(?=[«"“(]?[A-ZА-ЯЁ]|[—–-]\s+[«"“(]?[A-ZА-ЯЁ])/g;  // = split_sentences
+  const tok = (t, base) => [...t.matchAll(EN_TOK)].map(m =>
+    `<span${/^[A-Za-zА-Яа-яЁё]/.test(m[0]) ? ' class="w"' : ''} data-a="${base + m.index}">${esc(m[0])}</span>`).join('');
   function view(cell) {
-    const v = $('textarea.tr', cell).value;
-    $('p.en', cell).innerHTML = v ? [...v.matchAll(EN_TOK)].map(m =>
-      `<span${/^[A-Za-zА-Яа-яЁё]/.test(m[0]) ? ' class="w"' : ''} data-a="${m.index}">${esc(m[0])}</span>`).join('')
-      : '<span class="ph" data-a="0">…</span>';
+    const v = $('textarea.tr', cell).value, p = $('p.en', cell), row = cell.closest('.row');
+    if (!v.trim()) { p.innerHTML = '<span class="ph" data-a="0">…</span>'; return; }
+    const n0 = +row.dataset.n0;
+    let n = n0, html = '', last = 0;
+    for (const m of [...v.matchAll(EN_BOUND), null]) {
+      const end = m ? m.index + m[1].length : v.length;
+      html += `<sup class="n en">${n++}</sup>` + tok(v.slice(last, end), last);
+      if (m) { html += tok(v.slice(end, m.index + m[0].length), end); last = m.index + m[0].length; }
+    }
+    p.innerHTML = html;
+    p.classList.toggle('off', n - n0 !== work.sentences[+row.dataset.i].length);  // sentence counts differ
   }
   function edit(cell, at) {
     const ta = $('textarea.tr', cell);
