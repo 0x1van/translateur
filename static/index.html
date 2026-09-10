@@ -12,8 +12,8 @@
 <body>
 <header class="bar">
   <span class="brand">nova·nevédoma · translator</span>
-  <label>voice <select id="preset"></select></label>
-  <button id="voices-btn" type="button">edit voices</button>
+  <label>project <select id="preset"></select></label>
+  <button id="voices-btn" type="button">system prompt</button>
   <label>model <select id="model"></select></label>
   <button id="theme-btn" type="button" aria-label="Toggle dark theme">dark</button>
   <span id="status" class="status" aria-live="polite"></span>
@@ -43,17 +43,13 @@
 
 <dialog id="voices-dialog">
   <form method="dialog" id="voices-form">
-    <p class="hint">three voices, each with its own style and freedom · edits are kept in this browser per preset ·</p>
-    <div class="voice"><span class="voice-k">A</span>
-      <label>style <textarea name="A" rows="2"></textarea></label>
-      <label>freedom <select name="A_freedom"></select></label></div>
-    <div class="voice"><span class="voice-k">B</span>
-      <label>style <textarea name="B" rows="2"></textarea></label>
-      <label>freedom <select name="B_freedom"></select></label></div>
-    <div class="voice"><span class="voice-k">C</span>
-      <label>style <textarea name="C" rows="2"></textarea></label>
-      <label>freedom <select name="C_freedom"></select></label></div>
-    <label>context (sent as the system prompt) <textarea name="context" rows="8"></textarea></label>
+    <p class="hint">the system prompt · describe voices A, B and C in it however you like · edits are kept in this browser per project ·</p>
+    <label>system prompt <textarea name="context" rows="16"></textarea></label>
+    <div class="freedom">
+      <label>A freedom <select name="A_freedom"></select></label>
+      <label>B freedom <select name="B_freedom"></select></label>
+      <label>C freedom <select name="C_freedom"></select></label>
+    </div>
     <div class="row-end"><button type="button" class="reset">reset to preset</button><button type="button" class="cancel">cancel</button><button value="ok">save</button></div>
   </form>
 </dialog>

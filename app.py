@@ -26,11 +26,12 @@ WORKS_DIR = Path(os.environ.get("WORKS_DIR", HERE / "works"))
 PROJECTS_DIR = Path(os.environ.get("PROJECTS_DIR", HERE.parent.parent / "projects"))
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434").rstrip("/")
 
-DEFAULT_VOICES = {
-    "A": "Literal: closest to the Russian syntax and word order; may read slightly foreign.",
-    "B": "Literary British English: faithful, precise, unshowy; keeps sentence length and rhythm.",
-    "C": "Alternative literary phrasing: a different cadence or subtler word, same register.",
-}
+DEFAULT_VOICES = (
+    "## Voices\n"
+    "- A — Literal: closest to the Russian syntax and word order; may read slightly foreign.\n"
+    "- B — Literary British English: faithful, precise, unshowy; keeps sentence length and rhythm.\n"
+    "- C — Alternative literary phrasing: a different cadence or subtler word, same register."
+)
 DEFAULT_FREEDOM = {"A": 0.3, "B": 0.7, "C": 1.3}  # sampling temperature per voice
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 _BOUNDARY_RE = re.compile(r'([.!?…]["»”)]*)\s+(?=[«"“(]?[A-ZА-ЯЁ]|[—–-]\s+[«"“(]?[A-ZА-ЯЁ])')
@@ -146,19 +147,13 @@ _SKIP_SECTIONS = {"Variant scheme", "Output shape", "Voice-continuity source"}
 
 @cache
 def load_presets() -> list[dict]:
-    presets = [
-        {"name": "plain", "voices": DEFAULT_VOICES, "context": "", "glossary": [], "rejected": []}
-    ]
+    presets = [{"name": "plain", "context": DEFAULT_VOICES, "glossary": [], "rejected": []}]
     for cfg in sorted(PROJECTS_DIR.glob("*/translation/config.md")):
         sec = _sections(cfg.read_text())
-        voices = dict(DEFAULT_VOICES)
-        for m in re.finditer(
-            r"^- \*\*([ABC]) — ([^*]+?):?\*\*:?\s*(.*)$",
-            sec.get("Variant scheme", ""),
-            re.MULTILINE,
-        ):
-            voices[m.group(1)] = f"{m.group(2).strip()}: {m.group(3).strip()}"
+        # the project's own Variant scheme is the voices section; otherwise the defaults
+        voices = sec.get("Variant scheme") and "## Voices\n" + sec["Variant scheme"]
         context = "\n\n".join(f"## {h}\n{b}" for h, b in sec.items() if h not in _SKIP_SECTIONS)
+        context = (context + "\n\n" if context else "") + (voices or DEFAULT_VOICES)
         glossary, rejected = [], []
         gpath = cfg.with_name("glossary.yaml")
         if gpath.exists():
@@ -181,7 +176,6 @@ def load_presets() -> list[dict]:
         presets.append(
             {
                 "name": cfg.parent.parent.name,
-                "voices": voices,
                 "context": context,
                 "glossary": glossary,
                 "rejected": rejected,
@@ -272,9 +266,8 @@ async def models() -> list[str]:
 class TranslateReq(BaseModel):
     model: str
     preset: str = "plain"
-    voices: dict[str, str] = DEFAULT_VOICES
     freedom: dict[str, float] = DEFAULT_FREEDOM
-    context: str = ""
+    context: str = DEFAULT_VOICES  # the system prompt: project notes + the A/B/C voices
     sentence: str
     prev_ru: str = ""
     prev_en: str = ""
@@ -318,11 +311,10 @@ async def translate(req: TranslateReq) -> dict:
     user += f"\nTranslate ONLY the sentence between <<< and >>>, nothing else:\n<<< {req.sentence} >>>\n"
 
     async def one(k: str) -> tuple[str, str]:
-        voice = req.voices.get(k) or DEFAULT_VOICES[k]
         out = await ollama_json(
             req.model,
             system,
-            user + f"\nVoice {k} — render it in this voice: {voice}",
+            user + f"\nVoice {k} — render it in voice {k} as described in your instructions.",
             VARIANT_SCHEMA,
             req.freedom.get(k, DEFAULT_FREEDOM[k]),
         )

@@ -19,9 +19,10 @@ uv run uvicorn app:app --reload    # http://127.0.0.1:8000
 - **click inside an English word** (or select a phrase) — one popover: the model's alternatives for that span, sampled wild, plus Moby's related words; click any to swap it in.
 - **check grammar** — model pass per paragraph; click an issue to apply the fix. Spelling is the
   browser's own (`spellcheck` on the pane).
-- **voice** — presets are read from `projects/*/translation/config.md` (variant scheme +
-  policy sections as system prompt) and `glossary.yaml` (matching terms and rejected terms are
-  injected per sentence). *edit voices* overrides per browser.
+- **project** — the system prompt is built from `projects/*/translation/config.md` (policy
+  sections, then its variant scheme as `## Voices` A/B/C) and `glossary.yaml` (matching terms and
+  rejected terms are injected per sentence). *system prompt* lets you edit the whole thing, plus
+  the per-voice freedom (temperature); overrides are kept per browser.
 
 Env: `OLLAMA_URL` (default `http://localhost:11434`), `WORKS_DIR`, `PROJECTS_DIR`.
 

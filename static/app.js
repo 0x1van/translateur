@@ -34,13 +34,12 @@
   };
   applyTheme(localStorage.getItem('theme'));
 
-  // ---------- voices (preset + per-browser overrides) ----------
+  // ---------- system prompt (project preset + per-browser overrides) ----------
   const voiceKey = name => 'voices:' + name;
   function currentVoice() {
     const p = presets.find(p => p.name === presetSel.value) || presets[0];
     const saved = JSON.parse(localStorage.getItem(voiceKey(p.name)) || 'null');
-    return { name: p.name, voices: saved?.voices || p.voices, context: saved?.context ?? p.context,
-      freedom: { ...DEFAULT_FREEDOM, ...(saved?.freedom || {}) } };
+    return { name: p.name, context: saved?.context ?? p.context, freedom: { ...DEFAULT_FREEDOM, ...(saved?.freedom || {}) } };
   }
 
   // ---------- boot ----------
@@ -137,10 +136,10 @@
     const freedom = Object.fromEntries(Object.entries(v.freedom).map(([k, name]) => [k, FREEDOM[name] ?? FREEDOM.free]));
     try {
       const out = await api('/api/translate', { method: 'POST', body: {
-        model: modelSel.value, preset: v.name, voices: v.voices, context: v.context, freedom,
+        model: modelSel.value, preset: v.name, context: v.context, freedom,
         sentence: sents[j], prev_ru, prev_en, next_ru, guidance } });
       $('.thinking', box).outerHTML = ['A', 'B', 'C'].map(k =>
-        `<button type="button" class="variant" data-k="${k}"><b>${k}</b><small>${esc((v.voices[k] || '').split(':')[0])} · ${esc(v.freedom[k])}</small>${esc(out[k])}</button>`).join('') +
+        `<button type="button" class="variant" data-k="${k}"><b>${k}</b><small>${esc(v.freedom[k])}</small>${esc(out[k])}</button>`).join('') +
         (out.glossary.length || out.rejected.length ? `<p class="glossary">${
           out.glossary.map(g => `${esc(g.ru)} → ${esc(g.en)}`).join(' · ')}${
           out.rejected.map(r => ` · not “${esc(r.en)}”`).join('')}</p>` : '');
@@ -269,17 +268,16 @@
   };
   $('#voices-btn').onclick = () => {
     const v = currentVoice();
-    for (const k of ['A', 'B', 'C']) { voicesForm.elements[k].value = v.voices[k]; voicesForm.elements[k + '_freedom'].value = v.freedom[k]; }
+    for (const k of ['A', 'B', 'C']) voicesForm.elements[k + '_freedom'].value = v.freedom[k];
     voicesForm.elements.context.value = v.context;
     voicesDlg.showModal();
   };
   $('.reset', voicesForm).onclick = () => { localStorage.removeItem(voiceKey(presetSel.value)); voicesDlg.close(); };
   voicesForm.onsubmit = e => {
     e.preventDefault();
-    const f = e.target.elements, pick = k => ({ voice: f[k].value, freedom: f[k + '_freedom'].value });
-    const A = pick('A'), B = pick('B'), C = pick('C');
+    const f = e.target.elements;
     localStorage.setItem(voiceKey(presetSel.value), JSON.stringify({
-      voices: { A: A.voice, B: B.voice, C: C.voice }, freedom: { A: A.freedom, B: B.freedom, C: C.freedom }, context: f.context.value }));
+      freedom: { A: f.A_freedom.value, B: f.B_freedom.value, C: f.C_freedom.value }, context: f.context.value }));
     voicesDlg.close();
   };
 

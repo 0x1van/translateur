@@ -118,8 +118,8 @@ def test_hunks():
 
 def test_presets_parse_project_config():
     p = {p["name"]: p for p in appmod.load_presets()}
-    assert p["plain"]["voices"] == appmod.DEFAULT_VOICES
-    assert p["demo"]["voices"]["B"] == "House voice: Quiet precision."
+    assert p["plain"]["context"] == appmod.DEFAULT_VOICES
+    assert "- **B — House voice:** Quiet precision." in p["demo"]["context"]
     assert "Translation philosophy" in p["demo"]["context"]
     assert "Output shape" not in p["demo"]["context"]
     assert p["demo"]["glossary"][0] == {"ru": "окно", "en": "window"}

@@ -149,9 +149,8 @@ dialog { border: 1px solid var(--color-border); border-top: 2px solid var(--colo
 dialog::backdrop { background: rgba(26,26,26,.35); }
 dialog label { display: block; font-family: var(--font-mono); font-size: 0.65rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-text-muted); margin-bottom: var(--space-md); }
 dialog input, dialog textarea { display: block; width: 100%; margin-top: var(--space-xs); font-family: var(--font-serif); font-size: 1rem; text-transform: none; letter-spacing: 0; border: 1px solid var(--color-border); background: var(--color-bg-alt); padding: var(--space-sm); }
-.voice { display: grid; grid-template-columns: 1.5rem 1fr 9rem; gap: var(--space-sm); align-items: start; }
-.voice-k { font-family: var(--font-mono); font-size: 0.8rem; padding-top: 1.2rem; }
-.voice select { width: 100%; margin-top: var(--space-xs); font-family: var(--font-mono); font-size: 0.7rem; text-transform: none; letter-spacing: 0; border: 1px solid var(--color-border); background: var(--color-bg-alt); padding: var(--space-sm); }
+.freedom { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-sm); }
+.freedom select { width: 100%; margin-top: var(--space-xs); font-family: var(--font-mono); font-size: 0.7rem; text-transform: none; letter-spacing: 0; border: 1px solid var(--color-border); background: var(--color-bg-alt); padding: var(--space-sm); }
 .row-end { display: flex; justify-content: flex-end; gap: var(--space-sm); }
 .hint { font-family: var(--font-mono); font-size: 0.65rem; color: var(--color-text-muted); margin: 0 0 var(--space-md); }
 
