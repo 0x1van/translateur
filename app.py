@@ -448,7 +448,7 @@ def thesaurus(word: str) -> dict:
 async def no_cache_ui(request, call_next):
     """The UI is tiny and edited often; never let the browser keep a stale copy."""
     resp = await call_next(request)
-    if request.url.path == "/" or request.url.path.startswith("/static"):
+    if not request.url.path.startswith("/api"):
         resp.headers["Cache-Control"] = "no-cache"
     return resp
 
@@ -456,6 +456,14 @@ async def no_cache_ui(request, call_next):
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse(HERE / "static" / "index.html")
+
+
+@app.get("/{slug}")
+def work_page(slug: str) -> FileResponse:
+    """A work lives at /<slug>; the page is the same, the JS reads the path."""
+    if not _SLUG_RE.match(slug):
+        raise HTTPException(404)
+    return index()
 
 
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")

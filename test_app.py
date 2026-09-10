@@ -165,6 +165,7 @@ def test_e2e(page, server_url):
     page.fill("textarea[name=source]", RU)
     page.click("#new-form button[value=ok]")
     page.wait_for_selector(".row")
+    assert page.url == server_url + "/demo-work"
     assert page.locator(".row").count() == 3
     assert page.locator(".sent").count() == 5
     assert (WORKS / "demo-work" / "translation.md").read_text() == "\n\n\n\n\n"
@@ -210,8 +211,9 @@ def test_e2e(page, server_url):
 
     # reload → persisted, paragraph-aligned
     page.wait_for_function("document.querySelector('#status').textContent.startsWith('saved')")
-    page.reload()
+    page.goto(server_url + "/demo-work")  # the work is the path
     page.wait_for_selector(".row")
+    assert page.locator("#works .work-item.active").get_attribute("href") == "/demo-work"
     assert page.locator(".row").nth(2).locator("textarea.tr").input_value() == "the end."
     assert page.locator(".row").nth(1).locator("textarea.tr").input_value() == ""
 

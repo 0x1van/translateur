@@ -56,22 +56,22 @@
       modelSel.onchange = () => localStorage.setItem('model', modelSel.value);
     } catch (e) { setStatus(e.message, true); }
     await refreshWorks();
-    const slug = new URLSearchParams(location.search).get('work') || localStorage.getItem('work');
+    const slug = location.pathname.slice(1) || localStorage.getItem('work');
     if (slug && worksList.querySelector(`[data-slug="${CSS.escape(slug)}"]`)) await openWork(slug);
   }
   async function refreshWorks() {
     const works = await api('/api/works');
-    worksList.innerHTML = works.map(w => `<li><button type="button" class="work-item" data-slug="${esc(w)}">${esc(w)}</button></li>`).join('')
+    worksList.innerHTML = works.map(w => `<li><a class="work-item" href="/${esc(w)}" data-slug="${esc(w)}">${esc(w)}</a></li>`).join('')
       || '<li class="clean">none yet ·</li>';
   }
-  worksList.addEventListener('click', e => { const b = e.target.closest('.work-item'); if (b) openWork(b.dataset.slug); });
+  worksList.addEventListener('click', e => { const a = e.target.closest('.work-item'); if (a && !e.metaKey && !e.ctrlKey) { e.preventDefault(); openWork(a.dataset.slug); } });
 
   // ---------- render ----------
   const tokenise = s => s.replace(/[А-Яа-яЁёA-Za-z][А-Яа-яЁёA-Za-z-]*/g, m => `<span class="w">${m}</span>`);
   async function openWork(slug) {
     work = await api('/api/works/' + slug);
     localStorage.setItem('work', slug);
-    history.replaceState(null, '', '?work=' + slug);
+    history.replaceState(null, '', '/' + slug);
     worksList.querySelectorAll('.work-item').forEach(b => b.classList.toggle('active', b.dataset.slug === slug));
     let n = 0;
     grid.innerHTML = work.source.map((block, i) => `
