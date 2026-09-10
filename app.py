@@ -297,6 +297,12 @@ class TranslateReq(BaseModel):
     guidance: str = ""
 
 
+def untranslated(text: str) -> bool:
+    """True when the 'English' is mostly Cyrillic — the model echoed the source."""
+    cyr = len(re.findall(r"[А-Яа-яЁё]", text))
+    return cyr > len(re.findall(r"[A-Za-z]", text)) and cyr > 0
+
+
 @app.post("/api/translate")
 async def translate(req: TranslateReq) -> dict:
     """One model call per voice, in parallel, each at its own temperature. The shared system
@@ -333,14 +339,15 @@ async def translate(req: TranslateReq) -> dict:
     user += f"\nTranslate ONLY the sentence between <<< and >>>, nothing else:\n<<< {req.sentence} >>>\n"
 
     async def one(k: str) -> tuple[str, str]:
-        out = await ollama_json(
-            req.model,
-            system,
-            user + f"\nVoice {k} — render it in voice {k} as described in your instructions.",
-            VARIANT_SCHEMA,
-            req.freedom.get(k, DEFAULT_FREEDOM[k]),
-        )
-        return k, str(out.get("text", "")).strip()
+        m = re.search(rf"^[-*\s]*\**{k}\b[^\n]*", req.context, re.MULTILINE)  # the voice's own line
+        ask = user + f"\nVoice {k} — render it in voice {k}: {m.group(0).strip('-* ') if m else ''}"
+        temp = req.freedom.get(k, DEFAULT_FREEDOM[k])
+        out = await ollama_json(req.model, system, ask, VARIANT_SCHEMA, temp)
+        text = str(out.get("text", "")).strip()
+        if untranslated(text) and temp > 0.8:  # hot sampling sometimes echoes the Russian
+            out = await ollama_json(req.model, system, ask, VARIANT_SCHEMA, 0.8)
+            text = str(out.get("text", "")).strip()
+        return k, text
 
     return dict(await asyncio.gather(*(one(k) for k in "ABC"))) | {
         "glossary": glossary,

@@ -38,7 +38,10 @@ class FakeOllama(BaseHTTPRequestHandler):
             sent = user.rsplit("<<< ", 1)[1].split(" >>>")[0]
             k = user.rsplit("Voice ", 1)[1][0]
             tag = " (glossed)" if "Glossary" in system and k == "A" else ""
-            out = {"text": f"{k} of {sent}{tag}"}
+            if body["options"]["temperature"] > 1.2:  # a hot model echoing the source
+                out = {"text": sent}
+            else:
+                out = {"text": f"{k} of {sent}{tag}"}
         self._send({"message": {"content": json.dumps(out)}})
 
     def _send(self, obj):
@@ -122,6 +125,12 @@ def _plain(tmp_path):
     return d
 
 
+def test_untranslated():
+    assert appmod.untranslated("В то время мне было двадцать четыре года.")
+    assert not appmod.untranslated("Back then I was twenty-four, in Moscow.")
+    assert not appmod.untranslated("")
+
+
 def test_hunks():
     assert appmod.hunks("He were nine year old.", "He was nine years old.") == [
         {"start": 3, "quote": "were", "fix": "was"},
@@ -199,6 +208,7 @@ def test_e2e(page, server_url):
     variants = page.locator(".variant").all_inner_texts()
     assert variants[0].endswith("A of Он сидел у окна. (glossed)")  # glossary reached the prompt
     assert "strict" in variants[0] and "wild" in variants[2]  # per-voice freedom labels
+    assert variants[2].endswith("C of Он сидел у окна.")  # the echoed Russian was retried cooler
     assert page.locator(".variants .glossary").inner_text().startswith("окно → window")
     page.locator(".variant[data-k=B]").click()
     ta = page.locator(".row").nth(0).locator("textarea.tr")
