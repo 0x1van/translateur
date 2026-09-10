@@ -98,7 +98,13 @@ import app as appmod
 
 RU = 'Он сидел у окна. Жизнь прошла!\n\n— Ну "что"? — сказал он. — Пойдём.\n\nКонец.'
 HAVE_DATA = all(
-    p.exists() for p in (appmod.lexicon.RU_EN, appmod.lexicon.EN_RU, appmod.lexicon.MOBY)
+    p.exists()
+    for p in (
+        appmod.lexicon.RU_EN,
+        appmod.lexicon.EN_RU,
+        appmod.lexicon.MOBY,
+        appmod.lexicon.WN_DIR,
+    )
 )
 
 # ---- unit ----
@@ -224,7 +230,10 @@ def test_presets_parse_project_config():
 def test_lexicon():
     d = appmod.lexicon.lookup("окна")
     assert d["lemmas"][0] == "окно" and "window" in d["entries"][0]["translations"]
-    assert "casement" in appmod.lexicon.thesaurus("windows")["synonyms"]
+    t = appmod.lexicon.thesaurus("windows")
+    assert "casement" in t["synonyms"]  # moby, flat
+    assert any("pal" in x["synonyms"] for x in appmod.lexicon.senses("chums"))  # wordnet, by sense
+    assert all(x["synonyms"] and x["definition"] for x in t["senses"])
     assert "окошко" in appmod.lexicon.thesaurus("окна")["synonyms"]  # round trip ru→en→ru
 
 
@@ -429,7 +438,11 @@ def test_e2e(page, server_url):
         assert page.locator("#pop .alts .syn").all_inner_texts() == ["other the", "bold the"]
         page.keyboard.press("Escape")
         en2.locator(".w", has_text="window").click()
-        page.wait_for_selector("#pop .moby .syn")
+        page.wait_for_selector("#pop .moby .syn", state="attached")
+        page.wait_for_selector("#pop .wn .syn")  # wordnet senses, each with a gloss
+        assert page.locator("#pop .wn .sense").count() >= 1
+        assert page.locator("#pop .moby .syn").first.is_hidden()  # moby folded away by default
+        page.locator("#pop .moby summary").click()
         page.locator("#pop .moby .syn", has_text="casement").first.click()
         assert ta2.input_value() == "the casement."
         page.wait_for_function("document.querySelector('#status').textContent.startsWith('saved')")

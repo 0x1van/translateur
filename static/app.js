@@ -313,14 +313,18 @@
     const term = v.slice(a, b);
     if (!/[A-Za-z]/.test(term) || term.length < 2) { pop.hidden = true; return; }
     showPop(`<h4>${esc(term)}</h4><span class="tag">alternatives · ${esc(modelSel.value)} · wild · click to replace</span>
-      <section class="alts"><p class="thinking">thinking</p></section><section class="moby"></section>`, x, y);
-    const alts = $('.alts', pop), moby = $('.moby', pop);
+      <section class="alts"><p class="thinking">thinking</p></section><section class="wn"></section><section class="moby"></section>`, x, y);
+    const alts = $('.alts', pop), wnBox = $('.wn', pop), moby = $('.moby', pop);
     pop.onclick = ev => {
       const s = ev.target.closest('.syn');
       if (s) { ta.setRangeText(s.textContent, a, b, 'select'); ta.sel = null; grow(ta); save(); pop.hidden = true; }
     };
     if (!/\s/.test(term)) api('/api/thesaurus?word=' + encodeURIComponent(term)).then(t => {
-      if (t.synonyms.length) moby.innerHTML = '<span class="tag">related words (Moby)</span>' + chips(t.synonyms.slice(0, 80));
+      // WordNet: synonyms grouped by sense (still contextless, but at least sense-separated)
+      if (t.senses?.length) wnBox.innerHTML = '<span class="tag">synonyms by sense (WordNet)</span><ul>' + t.senses.map(sn =>
+        `<li><span class="sense">${esc(sn.pos)} · ${esc(sn.definition)}</span> ${chips(sn.synonyms)}</li>`).join('') + '</ul>';
+      // Moby: one flat list over every sense of the word — folded away, for when the above runs dry
+      if (t.synonyms.length) moby.innerHTML = `<details><summary class="tag">more · all senses, unsorted (Moby, ${t.synonyms.length})</summary>${chips(t.synonyms.slice(0, 120))}</details>`;
     }).catch(() => {});
     altCtl?.abort();
     const ctl = altCtl = new AbortController(), vc = currentVoice();

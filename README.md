@@ -7,7 +7,7 @@ bilingual post pair.
 ```bash
 cd tools/translator
 uv sync --all-groups
-uv run python fetch_data.py        # once: WikDict ru-en + en-ru (38 MB) + Moby thesaurus (25 MB)
+uv run python fetch_data.py        # once: WikDict ru-en + en-ru (38 MB), Moby (25 MB), Open English WordNet (13 MB → 124 MB db)
 uv run uvicorn app:app --reload    # http://127.0.0.1:8000
 ```
 
@@ -16,7 +16,7 @@ uv run uvicorn app:app --reload    # http://127.0.0.1:8000
   insert at the cursor / replace the selection / append. Type freely in the right pane; it
   autosaves to `works/<slug>/translation.md`.
 - **click a Russian word** — dictionary (lemma, grammar, WikDict senses; click a translation to insert it) plus Russian near-synonyms (WikDict round trip ru→en→ru).
-- **English pane** — a rendered view with hoverable words until you click into it to type (click past a word, or Escape to leave). Sentences are numbered in step with the Russian; the numbers turn red when a paragraph's sentence counts differ. **Click a word** (or select a phrase while editing) — one popover: the model's alternatives for that span, sampled wild, plus Moby's related words; click any to swap it in.
+- **English pane** — a rendered view with hoverable words until you click into it to type (click past a word, or Escape to leave). Sentences are numbered in step with the Russian; the numbers turn red when a paragraph's sentence counts differ. **Click a word** (or select a phrase while editing) — one popover: the model's alternatives for that span (contextual, sampled wild), WordNet synonyms grouped by sense, and Moby's flat all-senses list folded behind *more*; click any to swap it in.
 - **check grammar** — model pass per paragraph; click an issue to apply the fix. Spelling is the
   browser's own (`spellcheck` on the pane).
 - **works & projects** — a work is `works/<slug>/source.md` + `translation.md`. `source.md` may

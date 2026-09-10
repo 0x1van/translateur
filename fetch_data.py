@@ -1,7 +1,9 @@
-"""Download the offline dictionary data (≈63 MB). Idempotent."""
+"""Download the offline dictionary data (≈63 MB + Open English WordNet). Idempotent."""
 
 import urllib.request
 from pathlib import Path
+
+import wn
 
 DATA = Path(__file__).parent / "data"
 FILES = {
@@ -23,4 +25,10 @@ if __name__ == "__main__":
         )  # an interrupted download never looks complete
         urllib.request.urlretrieve(url, part)
         part.replace(dest)
+    wn.config.data_directory = DATA / "wn"
+    if wn.lexicons(lexicon="oewn"):
+        print("have wordnet")
+    else:
+        print("fetching Open English WordNet …")
+        wn.download("oewn:2024")
     print("done")

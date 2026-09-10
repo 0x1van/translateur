@@ -1,19 +1,25 @@
-"""Offline word lookup: Russian→English dictionary (WikDict) and English thesaurus (Moby).
+"""Offline word lookup: Russian→English dictionary (WikDict), English synonyms by sense (Open
+English WordNet) and the flat associative Moby list.
 
 Data files live in data/ — run `python fetch_data.py` once to download them.
 """
 
 import re
 import sqlite3
+import threading
 from functools import cache
 from pathlib import Path
 
 import pymorphy3
+import wn
+from wn.morphy import Morphy
 
 DATA = Path(__file__).parent / "data"
 RU_EN = DATA / "ru-en.sqlite3"
 EN_RU = DATA / "en-ru.sqlite3"
 MOBY = DATA / "mthesaur.txt"
+WN_DIR = DATA / "wn"
+WN_LEXICON = "oewn:2024"
 WORD_RE = re.compile(r"[А-Яа-яЁё][А-Яа-яЁё-]*")
 _WIKI_RE = re.compile(r"\[\[(?:[^|\]]*\|)?([^\]]*)\]\]")
 
@@ -130,11 +136,59 @@ def thesaurus_ru(word: str) -> dict:
     return {"word": cands[0], "synonyms": syn}
 
 
+_WN_LOCK = threading.Lock()  # one sqlite connection shared across the server's worker threads
+
+
+@cache
+def _wn() -> wn.Wordnet:
+    wn.config.data_directory = WN_DIR
+    wn.config.allow_multithreading = True  # else the connection is bound to the first thread
+    if not WN_DIR.exists() or not wn.lexicons(lexicon="oewn"):
+        raise MissingData("data/wn missing — run: uv run python fetch_data.py")
+    return wn.Wordnet(WN_LEXICON, lemmatizer=Morphy())
+
+
+def senses(word: str) -> list[dict]:
+    """English word → its WordNet senses that have synonyms: pos, gloss, synonyms. Adjectives also
+    pull in the 'similar to' cluster, which is where their near-synonyms live."""
+    w = word.strip().lower()
+    # the word's own lemma is not a synonym: regular inflections via Morphy (windows → window),
+    # irregular ones via the entry's listed forms (caught → catch)
+    base = {w} | {lemma for lemmas in Morphy()(w, None).values() for lemma in lemmas}
+    out = []
+    with _WN_LOCK:
+        synsets = list(_wn().synsets(w))
+        rows = [
+            (ss, ss.lemmas(), ss.senses(), ss.get_related("similar"), ss.definition())
+            for ss in synsets
+        ]
+    for ss, lemmas, sns, similar, definition in rows:
+        with _WN_LOCK:
+            own = base | {
+                sn.word().lemma().lower()
+                for sn in sns
+                if w in {f.lower() for f in sn.word().forms()}
+            }
+            similar_lemmas = [lm for sim in similar for lm in sim.lemmas()]
+        seen, found = own | {w}, []
+        for lm in lemmas + similar_lemmas:
+            if lm.lower() not in seen:
+                seen.add(lm.lower())
+                found.append(lm)
+        if found:  # a sense whose only lemma is the word itself is a gloss, not a synonym set
+            out.append({"pos": ss.pos, "definition": definition or "", "synonyms": found[:12]})
+    return out[:8]
+
+
 def thesaurus(word: str) -> dict:
-    """English word → Moby synonyms. Tries a few crude stems; no lemmatiser."""
+    """English word → WordNet senses (grouped) + Moby's flat list. Tries a few crude stems for Moby."""
     if WORD_RE.match(word.strip()):
         return thesaurus_ru(word)
     w = word.strip().lower()
+    try:
+        sense_list = senses(w)
+    except MissingData:
+        sense_list = []
     # ponytail: suffix stripping instead of an English lemmatiser; add `wn` if it misses too often
     tries = [
         w,
@@ -149,8 +203,8 @@ def thesaurus(word: str) -> dict:
     table = _moby()
     for t in tries:
         if t and t in table:
-            return {"word": t, "synonyms": table[t]}
-    return {"word": w, "synonyms": []}
+            return {"word": t, "senses": sense_list, "synonyms": table[t]}
+    return {"word": w, "senses": sense_list, "synonyms": []}
 
 
 if __name__ == "__main__":
@@ -158,5 +212,6 @@ if __name__ == "__main__":
     assert "окно" in r["lemmas"] and any("window" in e["translations"] for e in r["entries"]), r
     assert "сидеть" in lemmas("он сидел у окна")
     assert "casement" in thesaurus("windows")["synonyms"]
+    assert any("pal" in x["synonyms"] for x in senses("chums")), senses("chums")
     assert "окошко" in thesaurus("окна")["synonyms"], thesaurus("окна")
     print("lexicon ok")

@@ -152,6 +152,9 @@ textarea.tr::placeholder { color: var(--color-border); font-style: italic; }
 .pop button.syn:hover { box-shadow: none; background: var(--color-accent); }
 .pop span.syn { cursor: default; }
 .pop section { margin-top: var(--space-xs); }
+.pop details summary { cursor: pointer; list-style: none; }
+.pop details summary::before { content: "▸ "; }
+.pop details[open] summary::before { content: "▾ "; }
 .pop .none { color: var(--color-text-muted); font-style: italic; }
 
 /* ---- dialogs ---- */
