@@ -138,11 +138,12 @@
     const attempt = async (unloading = false) => {
       clearTimeout(saveTimer);
       const blocks = Object.fromEntries(w.translation.map((t, i) => [i, t]).filter(([i, t]) => t !== w.saved[i]));
-      if (!Object.keys(blocks).length) { flush = null; setStatus('saved ·'); return true; }
+      const done = () => { if (flush === attempt) flush = null; };  // typing meanwhile installed a newer one: leave it
+      if (!Object.keys(blocks).length) { done(); setStatus('saved ·'); return true; }
       try {
         await api('/api/works/' + w.slug, { method: 'PATCH', keepalive: unloading, body: { blocks } });
         for (const i in blocks) w.saved[i] = blocks[i];
-        flush = null; setStatus('saved ·'); return true;
+        done(); if (flush === null) setStatus('saved ·'); return true;
       } catch (e) { setStatus(e.message + ' · unsaved', true); return false; }  // stays armed: retried on the next save or switch
     };
     flush = attempt;

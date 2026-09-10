@@ -143,6 +143,20 @@ def test_patch_blocks():
     assert appmod.load_work("patchy")["translation"] == ["one", "two\nlines", "three"]
     with pytest.raises(appmod.HTTPException):
         appmod.patch_work("patchy", appmod.PatchWork(blocks={7: "x"}))
+    assert not list(d.glob("*.tmp"))  # atomic write leaves no temp file behind
+    # overlapping patches of different blocks both land (serialised by the lock)
+    ts = [
+        threading.Thread(
+            target=appmod.patch_work, args=("patchy", appmod.PatchWork(blocks={i: f"t{i}"}))
+        )
+        for i in range(3)
+        for _ in range(4)
+    ]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    assert appmod.load_work("patchy")["translation"] == ["t0", "t1", "t2"]
 
 
 def test_voice_line():

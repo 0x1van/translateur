@@ -18,5 +18,9 @@ if __name__ == "__main__":
             print(f"have {name}")
             continue
         print(f"fetching {name} …")
-        urllib.request.urlretrieve(url, dest)
+        part = dest.with_suffix(
+            dest.suffix + ".part"
+        )  # an interrupted download never looks complete
+        urllib.request.urlretrieve(url, part)
+        part.replace(dest)
     print("done")

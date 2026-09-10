@@ -9,6 +9,7 @@ import difflib
 import json
 import os
 import re
+import threading
 from functools import cache
 from pathlib import Path
 
@@ -136,8 +137,8 @@ def create_work(body: NewWork) -> dict:
     d.mkdir(parents=True)
     meta = {k: v for k, v in (("project", body.project), ("title", body.title)) if v}
     fm = "---\n" + yaml.safe_dump(meta, allow_unicode=True) + "---\n\n" if meta else ""
-    (d / "source.md").write_text(fm + src + "\n")
-    (d / "translation.md").write_text("\n\n".join([""] * len(split_blocks(src))) + "\n")
+    _atomic_write(d / "source.md", fm + src + "\n")
+    _write_translation(d, [""] * len(split_blocks(src)))
     return load_work(body.slug)
 
 
@@ -151,8 +152,18 @@ def _clean_block(b: str) -> str:
     return re.sub(r"\n\s*\n", "\n", b.replace("\r\n", "\n")).strip("\n")
 
 
+_WRITE_LOCK = threading.Lock()  # ponytail: one process, one lock; per-work locks if it ever matters
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    """Never leave a half-written file: write beside it, then rename over it."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)
+
+
 def _write_translation(d: Path, blocks: list[str]) -> None:
-    (d / "translation.md").write_text("\n\n".join(blocks) + "\n")
+    _atomic_write(d / "translation.md", "\n\n".join(blocks) + "\n")
 
 
 @app.put("/api/works/{slug}")
@@ -160,20 +171,23 @@ def save_work(slug: str, body: SaveWork) -> dict:
     d = work_dir(slug)
     if not (d / "source.md").exists():
         raise HTTPException(404, "no such work")
-    _write_translation(d, [_clean_block(b) for b in body.translation])
+    with _WRITE_LOCK:
+        _write_translation(d, [_clean_block(b) for b in body.translation])
     return {"ok": True}
 
 
 @app.patch("/api/works/{slug}")
 def patch_work(slug: str, body: PatchWork) -> dict:
-    """Update some blocks; the file is rewritten whole, but the request stays small."""
-    w = load_work(slug)
-    blocks = list(w["translation"])
-    for i, text in body.blocks.items():
-        if not 0 <= i < len(blocks):
-            raise HTTPException(400, f"block {i} out of range")
-        blocks[i] = _clean_block(text)
-    _write_translation(work_dir(slug), blocks)
+    """Update some blocks; the file is rewritten whole, but the request stays small. The lock
+    keeps two overlapping patches from each restoring the other's blocks from a stale read."""
+    with _WRITE_LOCK:
+        w = load_work(slug)
+        blocks = list(w["translation"])
+        for i, text in body.blocks.items():
+            if not 0 <= i < len(blocks):
+                raise HTTPException(400, f"block {i} out of range")
+            blocks[i] = _clean_block(text)
+        _write_translation(work_dir(slug), blocks)
     return {"ok": True}
 
 
