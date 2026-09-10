@@ -170,10 +170,11 @@ def test_voice_line():
     assert appmod.voice_line(appmod.DEFAULT_VOICES, "C").startswith("C — Alternative")
 
 
-def test_untranslated():
-    assert appmod.untranslated("В то время мне было двадцать четыре года.")
-    assert not appmod.untranslated("Back then I was twenty-four, in Moscow.")
-    assert not appmod.untranslated("")
+def test_leaks_cyrillic():
+    assert appmod.leaks_cyrillic("В то время мне было двадцать четыре года.")
+    assert appmod.leaks_cyrillic("He went to the заутреня early.")
+    assert not appmod.leaks_cyrillic("Back then I was twenty-four, in Moscow.")
+    assert not appmod.leaks_cyrillic("")
 
 
 def test_hunks():

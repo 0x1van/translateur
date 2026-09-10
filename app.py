@@ -347,10 +347,9 @@ def voice_line(context: str, k: str) -> str:
     return m.group(0).strip("-* ") if m else ""
 
 
-def untranslated(text: str) -> bool:
-    """True when the 'English' is mostly Cyrillic — the model echoed the source."""
-    cyr = len(re.findall(r"[А-Яа-яЁё]", text))
-    return cyr > len(re.findall(r"[A-Za-z]", text)) and cyr > 0
+def leaks_cyrillic(text: str) -> bool:
+    """Any Cyrillic in the 'English': the model echoed the source or left a word untranslated."""
+    return bool(re.search(r"[А-Яа-яЁё]", text))
 
 
 @app.post("/api/translate")
@@ -393,8 +392,8 @@ async def translate(req: TranslateReq) -> dict:
         temp = req.freedom.get(k, DEFAULT_FREEDOM[k])
         out = await ollama_json(req.model, system, ask, VARIANT_SCHEMA, temp)
         text = str(out.get("text", "")).strip()
-        if untranslated(text) and temp > 0.8:  # hot sampling sometimes echoes the Russian
-            out = await ollama_json(req.model, system, ask, VARIANT_SCHEMA, 0.8)
+        if leaks_cyrillic(text):  # echoed or half-translated: one more sample, calmer if it was hot
+            out = await ollama_json(req.model, system, ask, VARIANT_SCHEMA, min(temp, 0.8))
             text = str(out.get("text", "")).strip()
         return k, text
 
