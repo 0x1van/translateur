@@ -66,10 +66,13 @@ def row(pg, i):
 
 
 def enter_edit(pg, i):
+    ta = row(pg, i).locator("textarea.tr")
+    if ta.is_visible():  # already editing (a click on the cell's own buttons keeps it so)
+        return ta
     en = row(pg, i).locator("p.en")
     b = en.bounding_box()
     en.click(position={"x": b["width"] - 2, "y": b["height"] - 3})
-    return row(pg, i).locator("textarea.tr")
+    return ta
 
 
 # ---------------- scenarios ----------------

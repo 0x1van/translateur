@@ -257,10 +257,13 @@ def server_url():
 
 def _edit(page, i):
     """Enter edit mode on row i by clicking past the end of its English view."""
+    ta = page.locator(".row").nth(i).locator("textarea.tr")
+    if ta.is_visible():  # already editing (a click on the cell's own buttons keeps it so)
+        return ta
     en = page.locator(".row").nth(i).locator("p.en")
     box = en.bounding_box()
     en.click(position={"x": box["width"] - 2, "y": box["height"] - 3})
-    return page.locator(".row").nth(i).locator("textarea.tr")
+    return ta
 
 
 def test_e2e(page, server_url):

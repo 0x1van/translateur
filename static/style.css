@@ -115,7 +115,7 @@ textarea.tr::placeholder { color: var(--color-border); font-style: italic; }
 .clean { font-family: var(--font-mono); font-size: 0.65rem; color: var(--color-text-muted); }
 
 /* ---- variants card ---- */
-.variants {
+.variants {  /* sits in the English cell, under the draft the chosen variant goes into */
   border-left: 2px solid var(--color-accent); background: var(--color-bg-alt);
   padding: var(--space-sm) var(--space-md); margin: var(--space-sm) 0;
 }

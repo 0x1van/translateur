@@ -83,9 +83,9 @@
     grid.innerHTML = work.source.map((block, i) => `
       <div class="row" id="p${i}" data-i="${i}" data-n0="${n + 1}">
         <div class="cell src" lang="ru"><p>${work.sentences[i].map((s, j) =>
-          `<span class="sent" data-j="${j}"><sup class="n" title="translate this sentence" role="button" tabindex="0">${++n}</sup>${tok(s, 0)}</span>`).join(' ')}</p>
-          <div class="variants" hidden></div></div>
+          `<span class="sent" data-j="${j}"><sup class="n" title="translate this sentence" role="button" tabindex="0">${++n}</sup>${tok(s, 0)}</span>`).join(' ')}</p></div>
         <div class="cell tr"><p class="en" lang="en-GB" title="click a word to look it up · click elsewhere to edit"></p><textarea class="tr" lang="en-GB" spellcheck="true" placeholder="…"></textarea>
+          <div class="variants" hidden></div>
           <div class="tools"><button type="button" class="check">check grammar</button></div><div class="issues"></div></div>
       </div>`).join('');
     grid.querySelectorAll('.cell.tr').forEach((cell, i) => { $('textarea.tr', cell).value = work.translation[i]; view(cell); });
@@ -118,10 +118,17 @@
     cell.classList.add('editing'); pop.hidden = true; grow(ta);
     at = at ?? ta.value.length; ta.setSelectionRange(at, at); ta.focus();
   }
+  /* A click on the cell's own buttons (variants, check, issues) must not flip the cell back to the
+     view mid-click — the layout would shift under the pointer — so it keeps editing and refocuses. */
+  grid.addEventListener('pointerdown', e => {
+    const c = e.target.closest('.cell.tr');
+    if (c && c.classList.contains('editing') && !e.target.matches('textarea.tr')) c.hold = true;
+  });
   grid.addEventListener('focusout', e => {
     if (!e.target.matches('textarea.tr')) return;
     const ta = e.target, c = ta.closest('.cell.tr');
     ta.sel = [ta.selectionStart, ta.selectionEnd];  // caret or selection, surviving the blur a button click causes
+    if (c.hold) { c.hold = false; setTimeout(() => ta.focus()); return; }
     c.classList.remove('editing'); view(c);
   });
 
