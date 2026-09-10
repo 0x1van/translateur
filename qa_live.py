@@ -436,9 +436,9 @@ def s_pop_en_editing(pg):
     pg.goto(BASE + "/qa-new")
     pg.wait_for_selector(".row")
     ta = enter_edit(pg, 0)
-    at = (
-        re.search(r"[A-Za-z]{3,}", ta.input_value()).start() + 1
-    )  # caret inside the first real word
+    if not ta.input_value().strip():  # self-sufficient when run under a filter
+        ta.fill("Some words here.")
+    at = re.search(r"[A-Za-z]{3,}", ta.input_value()).start() + 1  # inside the first real word
     ta.evaluate("(t, at) => t.setSelectionRange(at, at)", at)
     ta.dispatch_event("mouseup")
     pg.wait_for_selector("#pop h4")
