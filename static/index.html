@@ -35,6 +35,10 @@
 <dialog id="new-dialog">
   <form method="dialog" id="new-form">
     <label>slug <input name="slug" pattern="[a-z0-9][a-z0-9-]*" required placeholder="gooseberries"></label>
+    <div class="two">
+      <label>project <select name="project"></select></label>
+      <label>title (optional) <input name="title" placeholder="Крыжовник"></label>
+    </div>
     <label>russian source (markdown, blank line between paragraphs)
       <textarea name="source" rows="12" lang="ru" required></textarea></label>
     <div class="row-end"><button value="cancel" type="button" class="cancel">cancel</button><button value="ok">create</button></div>

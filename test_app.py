@@ -106,6 +106,22 @@ def test_split_sentences_russian():
     assert appmod.split_sentences("«Иди», — сказал он. «Нет».") == ["«Иди», — сказал он.", "«Нет»."]
 
 
+def test_work_front_matter(tmp_path):
+    d = tmp_path / "w"
+    d.mkdir()
+    (d / "source.md").write_text('---\nproject: demo\ntitle: "Ch. I"\n---\n\nПервый.\n\nВторой.\n')
+    meta, text = appmod.read_source(d)
+    assert meta == {"project": "demo", "title": "Ch. I"} and text == "Первый.\n\nВторой.\n"
+    assert appmod.read_source(_plain(tmp_path)) == ({}, "Один.\n")
+
+
+def _plain(tmp_path):
+    d = tmp_path / "p"
+    d.mkdir()
+    (d / "source.md").write_text("Один.\n")
+    return d
+
+
 def test_hunks():
     assert appmod.hunks("He were nine year old.", "He was nine years old.") == [
         {"start": 3, "quote": "were", "fix": "was"},
@@ -163,21 +179,26 @@ def test_e2e(page, server_url):
     page.click("#new-btn")
     page.fill("input[name=slug]", "demo-work")
     page.fill("textarea[name=source]", RU)
+    page.select_option("#new-form select[name=project]", "demo")
+    page.fill("input[name=title]", "Demo · I")
     page.click("#new-form button[value=ok]")
     page.wait_for_selector(".row")
     assert page.url == server_url + "/demo-work"
+    # the work sits under its project in the tree, and the project's preset is selected
+    assert page.locator("#works h3").inner_text() == "demo"
+    assert page.locator("#works .work-item.active").inner_text() == "Demo · I"
+    assert page.input_value("#preset") == "demo"
+    assert (WORKS / "demo-work" / "source.md").read_text().startswith("---\nproject: demo\ntitle:")
     assert page.locator(".row").count() == 3
     assert page.locator(".sent").count() == 5
     assert (WORKS / "demo-work" / "translation.md").read_text() == "\n\n\n\n\n"
 
     # sentence → three variants → pick B → lands in the paired pane and is saved
-    page.select_option("#preset", "demo")
     page.locator(".row").nth(0).locator(".n").nth(0).click()
     page.wait_for_selector(".variant")
     variants = page.locator(".variant").all_inner_texts()
     assert variants[0].endswith("A of Он сидел у окна. (glossed)")  # glossary reached the prompt
     assert "strict" in variants[0] and "wild" in variants[2]  # per-voice freedom labels
-    assert page.locator("#works .work-item.active").inner_text() == "demo-work"
     assert page.locator(".variants .glossary").inner_text().startswith("окно → window")
     page.locator(".variant[data-k=B]").click()
     ta = page.locator(".row").nth(0).locator("textarea.tr")

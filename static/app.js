@@ -48,6 +48,7 @@
     presetSel.innerHTML = presets.map(p => `<option>${esc(p.name)}</option>`).join('');
     presetSel.value = localStorage.getItem('preset') || presets[0].name;
     presetSel.onchange = () => localStorage.setItem('preset', presetSel.value);
+    $('#new-form select[name=project]').innerHTML = '<option value="">none</option>' + presets.slice(1).map(p => `<option>${esc(p.name)}</option>`).join('');
     try {
       const models = await api('/api/models');
       modelSel.innerHTML = models.map(m => `<option>${esc(m)}</option>`).join('');
@@ -60,8 +61,11 @@
     if (slug && worksList.querySelector(`[data-slug="${CSS.escape(slug)}"]`)) await openWork(slug);
   }
   async function refreshWorks() {
-    const works = await api('/api/works');
-    worksList.innerHTML = works.map(w => `<li><a class="work-item" href="/${esc(w)}" data-slug="${esc(w)}">${esc(w)}</a></li>`).join('')
+    const works = await api('/api/works'), groups = {};
+    works.forEach(w => (groups[w.project] ||= []).push(w));  // sorted by project, then slug
+    const item = w => `<li><a class="work-item" href="/${esc(w.slug)}" data-slug="${esc(w.slug)}" title="${esc(w.slug)}">${esc(w.title || w.slug)}</a></li>`;
+    worksList.innerHTML = Object.entries(groups).map(([p, ws]) =>
+      p ? `<li><h3>${esc(p)}</h3><ul>${ws.map(item).join('')}</ul></li>` : ws.map(item).join('')).join('')
       || '<li class="clean">none yet ·</li>';
   }
   worksList.addEventListener('click', e => { const a = e.target.closest('.work-item'); if (a && !e.metaKey && !e.ctrlKey) { e.preventDefault(); openWork(a.dataset.slug); } });
@@ -73,6 +77,7 @@
     localStorage.setItem('work', slug);
     history.replaceState(null, '', '/' + slug);
     worksList.querySelectorAll('.work-item').forEach(b => b.classList.toggle('active', b.dataset.slug === slug));
+    if (presets.some(p => p.name === work.project)) presetSel.value = work.project;  // the work's project wins
     let n = 0;
     grid.innerHTML = work.source.map((block, i) => `
       <div class="row" id="p${i}" data-i="${i}" data-n0="${n + 1}">
@@ -303,7 +308,7 @@
     e.preventDefault();
     const f = new FormData(e.target);
     try {
-      await api('/api/works', { method: 'POST', body: { slug: f.get('slug'), source: f.get('source') } });
+      await api('/api/works', { method: 'POST', body: { slug: f.get('slug'), source: f.get('source'), project: f.get('project'), title: f.get('title') } });
       newDlg.close(); await refreshWorks(); await openWork(f.get('slug'));
     } catch (err) { setStatus(err.message, true); }
   };

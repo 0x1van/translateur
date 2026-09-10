@@ -69,16 +69,30 @@ def work_dir(slug: str) -> Path:
     return WORKS_DIR / slug
 
 
+_FM_RE = re.compile(r"\A---\n(.*?)\n---\n+", re.DOTALL)
+
+
+def read_source(d: Path) -> tuple[dict, str]:
+    """source.md may open with YAML front matter: project (a preset name) and title."""
+    text = (d / "source.md").read_text()
+    m = _FM_RE.match(text)
+    meta = (yaml.safe_load(m.group(1)) or {}) if m else {}
+    return ({k: str(v) for k, v in meta.items() if v}, text[m.end() :] if m else text)
+
+
 def load_work(slug: str) -> dict:
     d = work_dir(slug)
     if not (d / "source.md").exists():
         raise HTTPException(404, "no such work")
-    src = split_blocks((d / "source.md").read_text())
+    meta, text = read_source(d)
+    src = split_blocks(text)
     tr_path = d / "translation.md"
     tr = split_blocks(tr_path.read_text()) if tr_path.exists() else []
     tr = (tr + [""] * len(src))[: len(src)]  # pad/truncate to the source, always aligned
     return {
         "slug": slug,
+        "project": meta.get("project", ""),
+        "title": meta.get("title", ""),
         "source": src,
         "sentences": [split_sentences(b) for b in src],
         "translation": tr,
@@ -88,6 +102,8 @@ def load_work(slug: str) -> dict:
 class NewWork(BaseModel):
     slug: str
     source: str
+    project: str = ""
+    title: str = ""
 
 
 class SaveWork(BaseModel):
@@ -95,10 +111,14 @@ class SaveWork(BaseModel):
 
 
 @app.get("/api/works")
-def list_works() -> list[str]:
+def list_works() -> list[dict]:
     if not WORKS_DIR.exists():
         return []
-    return sorted(p.parent.name for p in WORKS_DIR.glob("*/source.md"))
+    works = []
+    for p in sorted(WORKS_DIR.glob("*/source.md")):
+        meta, _ = read_source(p.parent)
+        works.append({"slug": p.parent.name, **{k: meta.get(k, "") for k in ("project", "title")}})
+    return sorted(works, key=lambda w: (w["project"], w["slug"]))
 
 
 @app.post("/api/works")
@@ -110,7 +130,9 @@ def create_work(body: NewWork) -> dict:
     if not src:
         raise HTTPException(400, "source is empty")
     d.mkdir(parents=True)
-    (d / "source.md").write_text(src + "\n")
+    meta = {k: v for k, v in (("project", body.project), ("title", body.title)) if v}
+    fm = "---\n" + yaml.safe_dump(meta, allow_unicode=True) + "---\n\n" if meta else ""
+    (d / "source.md").write_text(fm + src + "\n")
     (d / "translation.md").write_text("\n\n".join([""] * len(split_blocks(src))) + "\n")
     return load_work(body.slug)
 

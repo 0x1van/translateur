@@ -19,6 +19,11 @@ uv run uvicorn app:app --reload    # http://127.0.0.1:8000
 - **English pane** — a rendered view with hoverable words until you click into it to type (click past a word, or Escape to leave). **Click a word** (or select a phrase while editing) — one popover: the model's alternatives for that span, sampled wild, plus Moby's related words; click any to swap it in.
 - **check grammar** — model pass per paragraph; click an issue to apply the fix. Spelling is the
   browser's own (`spellcheck` on the pane).
+- **works & projects** — a work is `works/<slug>/source.md` + `translation.md`. `source.md` may
+  open with front matter `project:` (a preset name) and `title:`; the tree groups works by project
+  and opening one selects its preset. Bulk import example:
+  `projects/posts-from-underground/scripts/import_translator.py` (one work per chapter, published
+  English aligned to the Russian paragraphs).
 - **project** — the system prompt is built from `projects/*/translation/config.md` (policy
   sections, then its variant scheme as `## Voices` A/B/C) and `glossary.yaml` (matching terms and
   rejected terms are injected per sentence). *system prompt* lets you edit the whole thing, plus
