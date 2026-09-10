@@ -280,6 +280,7 @@
     pop.hidden = true;
   });
 
+  const POS = { n: 'noun', v: 'verb', a: 'adj', s: 'adj', r: 'adv' };  // WordNet part-of-speech codes
   const chips = (list, tag = 'button') => list.map(s => `<${tag} type="button" class="syn">${esc(s)}</${tag}>`).join(' ');
 
   /* Russian pane: click a word → dictionary (click a translation to insert it into the English
@@ -322,7 +323,7 @@
     if (!/\s/.test(term)) api('/api/thesaurus?word=' + encodeURIComponent(term)).then(t => {
       // WordNet: synonyms grouped by sense (still contextless, but at least sense-separated)
       if (t.senses?.length) wnBox.innerHTML = '<span class="tag">synonyms by sense (WordNet)</span><ul>' + t.senses.map(sn =>
-        `<li><span class="sense">${esc(sn.pos)} · ${esc(sn.definition)}</span> ${chips(sn.synonyms)}</li>`).join('') + '</ul>';
+        `<li><span class="sense">${POS[sn.pos] || esc(sn.pos)} · ${esc(sn.definition)}</span> ${chips(sn.synonyms)}</li>`).join('') + '</ul>';
       // Moby: one flat list over every sense of the word — folded away, for when the above runs dry
       if (t.synonyms.length) moby.innerHTML = `<details><summary class="tag">more · all senses, unsorted (Moby, ${t.synonyms.length})</summary>${chips(t.synonyms.slice(0, 120))}</details>`;
     }).catch(() => {});
