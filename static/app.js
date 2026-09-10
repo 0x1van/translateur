@@ -72,7 +72,7 @@
 
   // ---------- render ----------
   async function openWork(slug) {
-    if (flush) await flush();  // a pending edit belongs to the work we are leaving
+    if (flush && !(await flush())) return;  // a pending edit belongs to the work we are leaving; stay if it will not save
     work = await api('/api/works/' + slug);
     work.saved = [...work.translation];  // what the server has, per block
     localStorage.setItem('work', slug);
@@ -135,16 +135,17 @@
     const w = work;
     w.translation = [...grid.querySelectorAll('textarea.tr')].map(t => t.value);
     grid.querySelectorAll('.cell.tr:not(.editing)').forEach(view);
-    flush = async (unloading = false) => {
-      clearTimeout(saveTimer); flush = null;
+    const attempt = async (unloading = false) => {
+      clearTimeout(saveTimer);
       const blocks = Object.fromEntries(w.translation.map((t, i) => [i, t]).filter(([i, t]) => t !== w.saved[i]));
-      if (!Object.keys(blocks).length) { setStatus('saved ·'); return; }
+      if (!Object.keys(blocks).length) { flush = null; setStatus('saved ·'); return true; }
       try {
         await api('/api/works/' + w.slug, { method: 'PATCH', keepalive: unloading, body: { blocks } });
         for (const i in blocks) w.saved[i] = blocks[i];
-        setStatus('saved ·');
-      } catch (e) { setStatus(e.message, true); }
+        flush = null; setStatus('saved ·'); return true;
+      } catch (e) { setStatus(e.message + ' · unsaved', true); return false; }  // stays armed: retried on the next save or switch
     };
+    flush = attempt;
     saveTimer = setTimeout(() => flush?.(), 700);
   }
   addEventListener('pagehide', () => flush?.(true));
@@ -180,7 +181,11 @@
     const box = $('.variants', row);
     const sents = work.sentences[i];
     const prev_ru = j > 0 ? sents[j - 1] : (i > 0 ? work.sentences[i - 1].slice(-1)[0] || '' : '');
-    const prev_en = $('textarea.tr', row).value.trim().split(/(?<=[.!?…]["”»)]*)\s+/).slice(-2).join(' ');
+    // "English so far": the sentences already rendered before this one (by position), else the
+    // tail of the previous paragraph's English
+    const enSents = t => t.trim().split(/(?<=[.!?…]["”»)]*)\s+/).filter(Boolean);
+    const prev_en = (j > 0 ? enSents($('textarea.tr', row).value).slice(0, j)
+      : (i > 0 ? enSents(grid.querySelectorAll('textarea.tr')[i - 1].value) : [])).slice(-2).join(' ');
     const next_ru = sents[j + 1] || '';
     box.hidden = false;
     box.innerHTML = `<header><span>${esc(sent.querySelector('.n').textContent)} ·</span>
@@ -215,7 +220,8 @@
     ta.sel = null;
     if (sel) {
       const [a, b] = sel;
-      const before = a > 0 && !/\s/.test(v[a - 1]) ? ' ' : '', after = b < v.length && !/\s/.test(v[b]) ? ' ' : '';
+      const before = a > 0 && !/[\s(«“"'\[]/.test(v[a - 1]) ? ' ' : '';
+      const after = b < v.length && !/[\s,.;:!?…)»”"'\]]/.test(v[b]) ? ' ' : '';
       ta.setRangeText(before + text + after, a, b, 'end');
       ta.sel = [ta.selectionEnd, ta.selectionEnd];  // a second variant continues from here
     } else {
@@ -256,6 +262,7 @@
     ta.value = ta.value.slice(0, at) + f + ta.value.slice(at + q.length);
     const shift = f.length - q.length;
     row.querySelectorAll('.issue').forEach(b => { if (+b.dataset.start > at) b.dataset.start = +b.dataset.start + shift; });
+    ta.sel = null;  // offsets moved; the next insert appends rather than landing on stale ones
     btn.remove(); grow(ta); save();
   }
 

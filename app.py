@@ -325,6 +325,14 @@ class TranslateReq(BaseModel):
     guidance: str = ""
 
 
+def voice_line(context: str, k: str) -> str:
+    """The bullet describing voice k, from the Voices section if there is one — never a prose
+    line that merely starts with the letter ('A constrained adaptation…')."""
+    _, _, voices = context.rpartition("## Voices")
+    m = re.search(rf"^[ \t]*[-*][ \t]*\**{k}\b[^\n]*", voices or context, re.MULTILINE)
+    return m.group(0).strip("-* ") if m else ""
+
+
 def untranslated(text: str) -> bool:
     """True when the 'English' is mostly Cyrillic — the model echoed the source."""
     cyr = len(re.findall(r"[А-Яа-яЁё]", text))
@@ -367,8 +375,7 @@ async def translate(req: TranslateReq) -> dict:
     user += f"\nTranslate ONLY the sentence between <<< and >>>, nothing else:\n<<< {req.sentence} >>>\n"
 
     async def one(k: str) -> tuple[str, str]:
-        m = re.search(rf"^[-*\s]*\**{k}\b[^\n]*", req.context, re.MULTILINE)  # the voice's own line
-        ask = user + f"\nVoice {k} — render it in voice {k}: {m.group(0).strip('-* ') if m else ''}"
+        ask = user + f"\nVoice {k} — render it in voice {k}: {voice_line(req.context, k)}"
         temp = req.freedom.get(k, DEFAULT_FREEDOM[k])
         out = await ollama_json(req.model, system, ask, VARIANT_SCHEMA, temp)
         text = str(out.get("text", "")).strip()

@@ -38,6 +38,9 @@ class FakeOllama(BaseHTTPRequestHandler):
             sent = user.rsplit("<<< ", 1)[1].split(" >>>")[0]
             k = user.rsplit("Voice ", 1)[1][0]
             tag = " (glossed)" if "Glossary" in system and k == "A" else ""
+            if k == "A" and "English so far" in user:
+                prev = user.split("(continue its voice): ", 1)[1].split("\n", 1)[0]
+                tag += f" [prev: {prev[-12:]}]"
             if body["options"]["temperature"] > 1.2:  # a hot model echoing the source
                 out = {"text": sent}
             else:
@@ -140,6 +143,17 @@ def test_patch_blocks():
     assert appmod.load_work("patchy")["translation"] == ["one", "two\nlines", "three"]
     with pytest.raises(appmod.HTTPException):
         appmod.patch_work("patchy", appmod.PatchWork(blocks={7: "x"}))
+
+
+def test_voice_line():
+    ctx = (
+        "# PfU\n\nA constrained translation-adaptation of Dostoevsky.\n\n## Voices\n"
+        "- **A — Literal (control):** Closest to the syntax.\n- **B — Project voice:** Modern.\n"
+    )
+    assert appmod.voice_line(ctx, "A") == "A — Literal (control):** Closest to the syntax."
+    assert appmod.voice_line(ctx, "B").startswith("B — Project voice")
+    assert appmod.voice_line(ctx, "C") == ""
+    assert appmod.voice_line(appmod.DEFAULT_VOICES, "C").startswith("C — Alternative")
 
 
 def test_untranslated():
@@ -254,6 +268,8 @@ def test_e2e(page, server_url):
     assert ta.input_value() == "B of Он сидел у окна."
     page.locator(".row").nth(0).locator(".n").nth(1).click()
     page.wait_for_selector(".variant")
+    # "English so far" for sentence 2 is the English of sentence 1, not the paragraph's tail
+    assert page.locator(".variant[data-k=A]").inner_text().endswith("[prev: идел у окна.]")
     page.locator(".variant[data-k=C]").click()
     assert ta.input_value() == "B of Он сидел у окна. C of Жизнь прошла!"
     # a selection made while editing is replaced by the next variant, even though the click blurs
@@ -271,6 +287,17 @@ def test_e2e(page, server_url):
     assert (
         ta.input_value()
         == "A of Он сидел у окна. (glossed) B of Он сидел у окна. C of Жизнь прошла!"
+    )
+    # no space is forced before punctuation when a replaced selection ends at a comma
+    ta.evaluate(
+        "t => { t.value = 'Take word, then.'; t.dispatchEvent(new Event('input', {bubbles: true})); }"
+    )
+    _edit(page, 0)
+    ta.evaluate("t => t.setSelectionRange(5, 9)")  # "word"
+    page.locator(".variant[data-k=C]").click()
+    assert ta.input_value() == "Take C of Он сидел у окна., then."
+    ta.evaluate(
+        "t => { t.value = 'A of Он сидел у окна. (glossed) B of Он сидел у окна. C of Жизнь прошла!'; t.dispatchEvent(new Event('input', {bubbles: true})); }"
     )
     # a caret left in the middle of the text is where the next variant lands
     _edit(page, 0)
