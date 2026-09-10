@@ -318,7 +318,12 @@ async def ollama_json(
         m = re.search(r"\{.*\}", content, re.DOTALL)  # tolerate prose around the object
         return json.loads(m.group(0) if m else content)
     except ValueError as e:
-        raise HTTPException(502, f"ollama returned non-JSON: {e}") from e
+        raise BadOutput(502, f"ollama returned non-JSON: {e}") from e
+
+
+class BadOutput(HTTPException):
+    """The model's reply was not the JSON asked for — typically a sample that started looping
+    and hit the output cap mid-string. Worth one more sample, not a failure of the whole request."""
 
 
 @app.get("/api/models")
@@ -396,11 +401,17 @@ async def translate(req: TranslateReq) -> dict:
         ask = user + f"\nVoice {k} — render it in voice {k}: {voice_line(req.context, k)}"
         temp = req.freedom.get(k, DEFAULT_FREEDOM[k])
         cap = 80 + len(req.sentence)  # ≈ 3× the sentence's own tokens
-        out = await ollama_json(req.model, system, ask, VARIANT_SCHEMA, temp, cap)
-        text = str(out.get("text", "")).strip()
-        if leaks_cyrillic(text):  # echoed or half-translated: one more sample, calmer if it was hot
-            out = await ollama_json(req.model, system, ask, VARIANT_SCHEMA, min(temp, 0.8), cap)
-            text = str(out.get("text", "")).strip()
+
+        async def sample(t: float) -> str:
+            try:
+                out = await ollama_json(req.model, system, ask, VARIANT_SCHEMA, t, cap)
+            except BadOutput:
+                return ""
+            return str(out.get("text", "")).strip()
+
+        text = await sample(temp)
+        if not text or leaks_cyrillic(text):  # looped, echoed or half-translated: once more, calmer
+            text = await sample(min(temp, 0.8))
         return k, text
 
     return dict(await asyncio.gather(*(one(k) for k in "ABC"))) | {

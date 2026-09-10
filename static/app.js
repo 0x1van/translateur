@@ -205,7 +205,7 @@
         model: modelSel.value, preset: v.name, context: v.context, freedom,
         sentence: sents[j], prev_ru, prev_en, next_ru, guidance } });
       $('.thinking', box).outerHTML = ['A', 'B', 'C'].map(k =>
-        `<button type="button" class="variant" data-k="${k}"><b>${k}</b><small>${esc(v.freedom[k])}</small>${esc(out[k])}</button>`).join('') +
+        `<button type="button" class="variant" data-k="${k}"><b>${k}</b><small>${esc(v.freedom[k])}</small>${out[k] ? esc(out[k]) : '<i class="none">no usable output · try again</i>'}</button>`).join('') +
         (out.glossary.length || out.rejected.length ? `<p class="glossary">${
           out.glossary.map(g => `${esc(g.ru)} → ${esc(g.en)}`).join(' · ')}${
           out.rejected.map(r => ` · not “${esc(r.en)}”`).join('')}</p>` : '');

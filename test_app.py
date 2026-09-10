@@ -42,6 +42,11 @@ class FakeOllama(BaseHTTPRequestHandler):
             if k == "A" and "English so far" in user:
                 prev = user.split("(continue its voice): ", 1)[1].split("\n", 1)[0]
                 tag += f" [prev: {prev[-12:]}]"
+            if (
+                body["options"]["temperature"] > 1.2 and "Жизнь" in sent
+            ):  # a hot sample cut mid-loop
+                self._send({"message": {"content": '{"text": "Life passed passed passed pas'}})
+                return
             if body["options"]["temperature"] > 1.2:  # a hot model echoing the source
                 out = {"text": sent}
             else:
