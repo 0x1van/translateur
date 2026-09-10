@@ -23,6 +23,7 @@ class FakeOllama(BaseHTTPRequestHandler):
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        assert 0 < body["options"]["num_predict"] < 5000  # every call carries a hard output cap
         system = body["messages"][0]["content"]
         user = body["messages"][1]["content"]
         if "copy editor" in system:

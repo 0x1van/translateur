@@ -290,9 +290,14 @@ CHECK_SCHEMA = {
 }
 
 
-async def ollama_json(model: str, system: str, user: str, schema: dict, temperature: float) -> dict:
+async def ollama_json(
+    model: str, system: str, user: str, schema: dict, temperature: float, max_tokens: int
+) -> dict:
+    """One structured-output chat call. `max_tokens` is a hard stop: a hot sample that starts
+    looping would otherwise generate until the context fills, and Ollama serves one request at a
+    time per model, so every later request would queue behind it for minutes."""
     payload = {
-        "options": {"temperature": temperature},
+        "options": {"temperature": temperature, "num_predict": max_tokens},
         "model": model,
         "stream": False,
         "format": schema,  # structured output; small models ignore the plain "json" mode
@@ -390,10 +395,11 @@ async def translate(req: TranslateReq) -> dict:
     async def one(k: str) -> tuple[str, str]:
         ask = user + f"\nVoice {k} — render it in voice {k}: {voice_line(req.context, k)}"
         temp = req.freedom.get(k, DEFAULT_FREEDOM[k])
-        out = await ollama_json(req.model, system, ask, VARIANT_SCHEMA, temp)
+        cap = 80 + len(req.sentence)  # ≈ 3× the sentence's own tokens
+        out = await ollama_json(req.model, system, ask, VARIANT_SCHEMA, temp, cap)
         text = str(out.get("text", "")).strip()
         if leaks_cyrillic(text):  # echoed or half-translated: one more sample, calmer if it was hot
-            out = await ollama_json(req.model, system, ask, VARIANT_SCHEMA, min(temp, 0.8))
+            out = await ollama_json(req.model, system, ask, VARIANT_SCHEMA, min(temp, 0.8), cap)
             text = str(out.get("text", "")).strip()
         return k, text
 
@@ -443,7 +449,7 @@ async def alternatives(req: AltReq) -> dict:
         f"ENGLISH DRAFT:\n{t[: req.start]}[[{term}]]{t[req.end :]}\n\n"
         f"Alternatives for [[{term}]]:"
     )
-    out = await ollama_json(req.model, system, user, ALT_SCHEMA, 1.3)
+    out = await ollama_json(req.model, system, user, ALT_SCHEMA, 1.3, 160 + 8 * len(term))
     seen = {term.strip().lower()}
     alts = []
     for a in out.get("alternatives", []):
@@ -493,7 +499,7 @@ async def check(req: CheckReq) -> dict:
     user = (
         f"RUSSIAN ORIGINAL (context only):\n{req.source}\n\n" if req.source else ""
     ) + f"ENGLISH TEXT TO CHECK:\n{req.text}"
-    out = await ollama_json(req.model, system, user, CHECK_SCHEMA, 0.2)
+    out = await ollama_json(req.model, system, user, CHECK_SCHEMA, 0.2, 200 + len(req.text))
     corrected = str(out.get("corrected", req.text)).strip("\n") or req.text
     notes = [str(n) for n in out.get("notes", []) if n]
     return {"corrected": corrected, "issues": hunks(req.text, corrected), "notes": notes}

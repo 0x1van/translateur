@@ -329,6 +329,8 @@ def s_translate_replace(pg):
     pg.goto(BASE + "/qa-new")
     pg.wait_for_selector(".row")
     ta = enter_edit(pg, 0)
+    if not ta.input_value().startswith("First paragraph."):  # self-sufficient under a filter
+        ta.fill("First paragraph. Second phrase!")
     ta.evaluate("t => t.setSelectionRange(0, 16)")  # "First paragraph."
     row(pg, 0).locator(".n").first.click()
     pg.wait_for_selector(".variants .variant", timeout=120000)
