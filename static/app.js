@@ -113,6 +113,7 @@
   }
   function edit(cell, at) {
     const ta = $('textarea.tr', cell);
+    ta.sel = null;
     cell.classList.add('editing'); pop.hidden = true; grow(ta);
     at = at ?? ta.value.length; ta.setSelectionRange(at, at); ta.focus();
   }
@@ -131,14 +132,16 @@
     const w = work;
     w.translation = [...grid.querySelectorAll('textarea.tr')].map(t => t.value);
     grid.querySelectorAll('.cell.tr:not(.editing)').forEach(view);
-    flush = async () => {
+    flush = async (unloading = false) => {
       clearTimeout(saveTimer); flush = null;
-      try { await api('/api/works/' + w.slug, { method: 'PUT', keepalive: true, body: { translation: w.translation } }); setStatus('saved ·'); }
+      // keepalive lets the PUT outlive the page, but browsers cap such bodies at ~64 KB
+      const keepalive = unloading && JSON.stringify(w.translation).length < 60000;
+      try { await api('/api/works/' + w.slug, { method: 'PUT', keepalive, body: { translation: w.translation } }); setStatus('saved ·'); }
       catch (e) { setStatus(e.message, true); }
     };
-    saveTimer = setTimeout(flush, 700);
+    saveTimer = setTimeout(() => flush?.(), 700);
   }
-  addEventListener('pagehide', () => flush?.());
+  addEventListener('pagehide', () => flush?.(true));
   grid.addEventListener('input', e => { if (e.target.matches('textarea.tr')) { pop.hidden = true; grow(e.target); save(); } });
 
   // ---------- sentence → variants ----------
@@ -226,8 +229,9 @@
         ? issues.map(i => `<button type="button" class="issue" data-start="${i.start}" data-q="${esc(i.quote)}" data-f="${esc(i.fix)}"><s>${esc(i.quote)}</s> → <b>${esc(i.fix)}</b></button>`).join('')
           + `<p class="clean">${notes.map(esc).join(' · ')}</p><button type="button" class="apply-all">apply all</button>`
         : '<p class="clean">no issues found ·</p>';
+      // apply all = each remaining hunk in turn, so edits made since the check survive
       const all = $('.apply-all', out);
-      if (all) all.onclick = () => { ta.value = res.corrected; out.innerHTML = ''; grow(ta); save(); };
+      if (all) all.onclick = () => { out.querySelectorAll('.issue').forEach(applyIssue); out.innerHTML = ''; };
     } catch (e) { out.innerHTML = `<p class="clean">${esc(e.message)}</p>`; }
   }
   /* Apply one hunk: at its recorded offset if the text there still matches, else first occurrence. */
@@ -292,7 +296,7 @@
     const alts = $('.alts', pop), moby = $('.moby', pop);
     pop.onclick = ev => {
       const s = ev.target.closest('.syn');
-      if (s) { ta.setRangeText(s.textContent, a, b, 'select'); grow(ta); save(); pop.hidden = true; }
+      if (s) { ta.setRangeText(s.textContent, a, b, 'select'); ta.sel = null; grow(ta); save(); pop.hidden = true; }
     };
     if (!/\s/.test(term)) api('/api/thesaurus?word=' + encodeURIComponent(term)).then(t => {
       if (t.synonyms.length) moby.innerHTML = '<span class="tag">related words (Moby)</span>' + chips(t.synonyms.slice(0, 80));

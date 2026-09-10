@@ -75,9 +75,10 @@ PROJECTS = Path(tempfile.mkdtemp())
     "vocabulary:\n  - russian: окно\n    english: window\n"
     "  - russian: клоп / насекомое\n    english: bug\n"
     "  - russian: выгода\n    english: metrics\n"
+    "cultural_references:\n  - original: Бокль (Henry Thomas Buckle)\n    modern: Pinker\n"
     "  - russian: ученье свет\n    english: learning enlightens\nrejected:\n"
     "  - term: casement\n    for: окно\n    reason: too fancy\n"
-    "  - term: advantage\n    for_russian: выгода\n    use_instead: metrics\n"
+    "  - term: advantage\n    for_russian: выгода\n    use_instead: context-dependent\n"
 )
 os.environ.update(
     WORKS_DIR=str(WORKS), PROJECTS_DIR=str(PROJECTS), OLLAMA_URL=f"http://127.0.0.1:{OLLAMA_PORT}"
@@ -153,13 +154,16 @@ def test_presets_parse_project_config():
     assert p["demo"]["glossary"][0] == {"ru": "окно", "en": "window"}
     g, r = appmod.glossary_for("demo", "Он сидел у окна.")
     assert g == [{"ru": "окно", "en": "window"}] and r == [{"ru": "окно", "en": "casement"}]
-    # `a / b` heads match either alternative; the for_russian/use_instead schema is read too,
-    # and use_instead lands in the glossary without duplicating an existing entry
+    # `a / b` heads match either alternative; for_russian rejected entries are read, and their
+    # prose use_instead is NOT turned into a glossary rendering; original/modern entries count
     assert appmod.glossary_for("demo", "Стать насекомым.")[0] == [
         {"ru": "клоп / насекомое", "en": "bug"}
     ]
     g, r = appmod.glossary_for("demo", "Где выгода?")
     assert g == [{"ru": "выгода", "en": "metrics"}] and r == [{"ru": "выгода", "en": "advantage"}]
+    assert appmod.glossary_for("demo", "Читал Бокля.")[0] == [
+        {"ru": "Бокль (Henry Thomas Buckle)", "en": "Pinker"}
+    ]
     assert appmod.glossary_for("demo", "Жизнь прошла.") == ([], [])
     assert appmod.glossary_for("demo", "Отдан в ученье к сапожнику.") == ([], [])  # partial phrase
     assert appmod.glossary_for("demo", "Ученье — свет.")[0] == [
@@ -283,6 +287,20 @@ def test_e2e(page, server_url):
     en2.click()
     ta2.fill("teh end.")
     page.keyboard.press("Escape")
+    # grammar: "apply all" after an intervening edit keeps that edit (hunks, not a stale rewrite)
+    en2.click()
+    ta2.fill("teh cat. teh dog.")
+    page.keyboard.press("Escape")
+    page.locator(".row").nth(2).locator(".check").click()
+    page.wait_for_selector(".issue")
+    en2.click()
+    ta2.fill("teh cat. teh dog. Added later.")
+    page.keyboard.press("Escape")
+    page.locator(".row").nth(2).locator(".apply-all").click()
+    assert ta2.input_value() == "the cat. the dog. Added later."
+    en2.click()
+    ta2.fill("teh end.")
+    page.keyboard.press("Escape")
     # grammar check + apply fix
     page.locator(".row").nth(2).locator(".check").click()
     page.wait_for_selector(".issue")
@@ -354,3 +372,8 @@ def test_e2e(page, server_url):
         assert page.locator("#pop h4").inner_text() == "casement"
         page.locator("#pop .alts .syn", has_text="bold casement").click()
         assert ta2.input_value() == "the bold casement."
+        # the chip replacement must not leave a selection armed: the next variant appends
+        page.locator(".row").nth(2).locator(".n").first.click()
+        page.wait_for_selector(".row:nth-child(3) .variant")
+        page.locator(".row").nth(2).locator(".variant[data-k=A]").click()
+        assert ta2.input_value() == "the bold casement. A of Конец."

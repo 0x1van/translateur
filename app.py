@@ -188,17 +188,17 @@ def load_presets() -> list[dict]:
                 "names",
                 "register_markers",
             ):
-                for e in g.get(key) or []:
-                    if isinstance(e, dict) and e.get("russian") and e.get("english"):
-                        glossary.append({"ru": e["russian"], "en": e["english"]})
-            for e in (
-                g.get("rejected") or []
-            ):  # two schemas in the wild: for/term, for_russian/use_instead
+                for e in g.get(key) or []:  # russian/english, or original/modern transpositions
+                    if not isinstance(e, dict):
+                        continue
+                    ru = e.get("russian") or e.get("original")
+                    en = e.get("english") or e.get("modern")
+                    if ru and en:
+                        glossary.append({"ru": ru, "en": en})
+            for e in g.get("rejected") or []:  # for/term or for_russian/term; use_instead is prose
                 ru = isinstance(e, dict) and (e.get("for") or e.get("for_russian"))
                 if ru and e.get("term"):
                     rejected.append({"ru": ru, "en": e["term"]})
-                if ru and e.get("use_instead"):
-                    glossary.append({"ru": ru, "en": e["use_instead"]})
         presets.append(
             {
                 "name": cfg.parent.parent.name,
