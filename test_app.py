@@ -73,8 +73,11 @@ PROJECTS = Path(tempfile.mkdtemp())
 )
 (PROJECTS / "demo" / "translation" / "glossary.yaml").write_text(
     "vocabulary:\n  - russian: окно\n    english: window\n"
+    "  - russian: клоп / насекомое\n    english: bug\n"
+    "  - russian: выгода\n    english: metrics\n"
     "  - russian: ученье свет\n    english: learning enlightens\nrejected:\n"
     "  - term: casement\n    for: окно\n    reason: too fancy\n"
+    "  - term: advantage\n    for_russian: выгода\n    use_instead: metrics\n"
 )
 os.environ.update(
     WORKS_DIR=str(WORKS), PROJECTS_DIR=str(PROJECTS), OLLAMA_URL=f"http://127.0.0.1:{OLLAMA_PORT}"
@@ -82,7 +85,7 @@ os.environ.update(
 
 import app as appmod
 
-RU = "Он сидел у окна. Жизнь прошла!\n\n— Ну что? — сказал он. — Пойдём.\n\nКонец."
+RU = 'Он сидел у окна. Жизнь прошла!\n\n— Ну "что"? — сказал он. — Пойдём.\n\nКонец.'
 HAVE_DATA = all(
     p.exists() for p in (appmod.lexicon.RU_EN, appmod.lexicon.EN_RU, appmod.lexicon.MOBY)
 )
@@ -150,6 +153,13 @@ def test_presets_parse_project_config():
     assert p["demo"]["glossary"][0] == {"ru": "окно", "en": "window"}
     g, r = appmod.glossary_for("demo", "Он сидел у окна.")
     assert g == [{"ru": "окно", "en": "window"}] and r == [{"ru": "окно", "en": "casement"}]
+    # `a / b` heads match either alternative; the for_russian/use_instead schema is read too,
+    # and use_instead lands in the glossary without duplicating an existing entry
+    assert appmod.glossary_for("demo", "Стать насекомым.")[0] == [
+        {"ru": "клоп / насекомое", "en": "bug"}
+    ]
+    g, r = appmod.glossary_for("demo", "Где выгода?")
+    assert g == [{"ru": "выгода", "en": "metrics"}] and r == [{"ru": "выгода", "en": "advantage"}]
     assert appmod.glossary_for("demo", "Жизнь прошла.") == ([], [])
     assert appmod.glossary_for("demo", "Отдан в ученье к сапожнику.") == ([], [])  # partial phrase
     assert appmod.glossary_for("demo", "Ученье — свет.")[0] == [
@@ -183,6 +193,14 @@ def server_url():
     server.should_exit = True
 
 
+def _edit(page, i):
+    """Enter edit mode on row i by clicking past the end of its English view."""
+    en = page.locator(".row").nth(i).locator("p.en")
+    box = en.bounding_box()
+    en.click(position={"x": box["width"] - 2, "y": box["height"] - 3})
+    return page.locator(".row").nth(i).locator("textarea.tr")
+
+
 def test_e2e(page, server_url):
     page.goto(server_url)
     page.click("#new-btn")
@@ -200,6 +218,9 @@ def test_e2e(page, server_url):
     assert (WORKS / "demo-work" / "source.md").read_text().startswith("---\nproject: demo\ntitle:")
     assert page.locator(".row").count() == 3
     assert page.locator(".sent").count() == 5
+    # straight quotes render as quotes, not as an entity with a clickable "quot"
+    assert '"что"' in page.locator(".row").nth(1).locator(".cell.src p").inner_text()
+    assert page.locator(".cell.src .w", has_text="quot").count() == 0
     assert (WORKS / "demo-work" / "translation.md").read_text() == "\n\n\n\n\n"
 
     # sentence → three variants → pick B → lands in the paired pane and is saved
@@ -217,6 +238,22 @@ def test_e2e(page, server_url):
     page.wait_for_selector(".variant")
     page.locator(".variant[data-k=C]").click()
     assert ta.input_value() == "B of Он сидел у окна. C of Жизнь прошла!"
+    # a selection made while editing is replaced by the next variant, even though the click blurs
+    # clicking an English sentence number must not try to translate (it is a label)
+    page.locator(".row").nth(0).locator("p.en .n").first.click()
+    assert page.locator(".row").nth(0).locator("textarea.tr").is_visible()
+    page.keyboard.press("Escape")
+    _edit(page, 0)
+    ta.evaluate("t => t.setSelectionRange(0, 21)")  # "B of Он сидел у окна."
+    page.locator(".row").nth(0).locator(".n").nth(0).click()
+    page.wait_for_selector(".variant")
+    page.locator(".variant[data-k=A]").click()
+    assert ta.input_value() == "A of Он сидел у окна. (glossed) C of Жизнь прошла!"
+    page.locator(".variant[data-k=B]").click()  # no selection now → appends
+    assert ta.input_value().endswith("Жизнь прошла! B of Он сидел у окна.")
+    ta.evaluate(
+        "t => { t.value = 'B of Он сидел у окна. C of Жизнь прошла!'; t.dispatchEvent(new Event('input', {bubbles: true})); }"
+    )
     page.wait_for_function("document.querySelector('#status').textContent.startsWith('saved')")
     assert (
         (WORKS / "demo-work" / "translation.md")
@@ -251,6 +288,26 @@ def test_e2e(page, server_url):
     page.wait_for_selector(".issue")
     page.locator(".issue").click()
     assert ta2.input_value() == "the end."
+
+    # an edit made just before switching works is flushed, not lost
+    page.click("#new-btn")
+    page.fill("input[name=slug]", "other")
+    page.fill("textarea[name=source]", "Другой.")
+    page.click("#new-form button[value=ok]")
+    page.wait_for_selector("#works .work-item.active", state="attached")
+    page.locator("#works .work-item", has_text="Demo · I").click()
+    page.wait_for_function("document.querySelector('.row textarea.tr').value !== ''")
+    ta2 = page.locator(".row").nth(2).locator("textarea.tr")
+    page.locator(".row").nth(2).locator("p.en").click()
+    ta2.fill("the end. Quick.")
+    page.locator("#works .work-item", has_text="other").click()  # within the 700 ms debounce
+    page.wait_for_function("location.pathname === '/other'")
+    assert (WORKS / "demo-work" / "translation.md").read_text().endswith("the end. Quick.\n")
+    assert (WORKS / "other" / "translation.md").read_text() == "\n"
+    page.locator("#works .work-item", has_text="Demo · I").click()
+    page.wait_for_function("location.pathname === '/demo-work'")
+    _edit(page, 2).fill("the end.")
+    page.keyboard.press("Escape")
 
     # reload → persisted, paragraph-aligned
     page.wait_for_function("document.querySelector('#status').textContent.startsWith('saved')")

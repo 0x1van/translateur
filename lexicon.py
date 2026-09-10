@@ -36,20 +36,29 @@ def lemmas(text: str) -> set[str]:
     return out
 
 
+def _clean(word: str) -> str:
+    return word.strip().strip("«»“”\"'.,;:!?…()—-")
+
+
+def _ru_candidates(word: str) -> list[str]:
+    """Lemmas to try in the dictionary: every parse's normal form, then the word itself."""
+    out: list[str] = []
+    for c in [p.normal_form for p in _morph().parse(word)] + [
+        word.lower(),
+        word.lower().replace("ё", "е"),
+    ]:
+        if c not in out:
+            out.append(c)
+    return out
+
+
 def lookup(word: str) -> dict:
     """Russian word → its lemma(s), grammar tag, and English translations grouped by sense."""
     if not RU_EN.exists():
         raise MissingData("data/ru-en.sqlite3 missing — run: uv run python fetch_data.py")
-    word = word.strip().strip("«»“”\"'.,;:!?…()—-")
+    word = _clean(word)
     parses = _morph().parse(word)
-    candidates: list[str] = []
-    for p in parses:
-        if p.normal_form not in candidates:
-            candidates.append(p.normal_form)
-    if word.lower() not in candidates:
-        candidates.append(word.lower())
-    if word.lower().replace("ё", "е") not in candidates:
-        candidates.append(word.lower().replace("ё", "е"))
+    candidates = _ru_candidates(word)
 
     con = sqlite3.connect(f"file:{RU_EN}?mode=ro", uri=True)
     marks = ",".join("?" * len(candidates))
@@ -85,21 +94,12 @@ def _moby() -> dict[str, list[str]]:
     return table
 
 
-def _ru_candidates(word: str) -> list[str]:
-    parses = _morph().parse(word)
-    out: list[str] = []
-    for c in [p.normal_form for p in parses] + [word.lower(), word.lower().replace("ё", "е")]:
-        if c not in out:
-            out.append(c)
-    return out
-
-
 def thesaurus_ru(word: str) -> dict:
     """Russian near-synonyms by round trip: ru→en top translations, then en→ru back. No Russian
     thesaurus is freely downloadable; the two WikDict halves together are a fair stand-in."""
     if not EN_RU.exists():
         raise MissingData("data/en-ru.sqlite3 missing — run: uv run python fetch_data.py")
-    cands = _ru_candidates(word.strip().strip("«»“”\"'.,;:!?…()—-"))
+    cands = _ru_candidates(_clean(word))
     fwd = sqlite3.connect(f"file:{RU_EN}?mode=ro", uri=True)
     marks = ",".join("?" * len(cands))
     en = [

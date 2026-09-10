@@ -15,7 +15,7 @@ from pathlib import Path
 import httpx
 import yaml
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -115,7 +115,7 @@ def list_works() -> list[dict]:
     if not WORKS_DIR.exists():
         return []
     works = []
-    for p in sorted(WORKS_DIR.glob("*/source.md")):
+    for p in WORKS_DIR.glob("*/source.md"):
         meta, _ = read_source(p.parent)
         works.append({"slug": p.parent.name, **{k: meta.get(k, "") for k in ("project", "title")}})
     return sorted(works, key=lambda w: (w["project"], w["slug"]))
@@ -147,9 +147,10 @@ def save_work(slug: str, body: SaveWork) -> dict:
     d = work_dir(slug)
     if not (d / "source.md").exists():
         raise HTTPException(404, "no such work")
-    blocks = [b.replace("\r\n", "\n").strip("\n") for b in body.translation]
-    if any("\n\n" in b for b in blocks):
-        raise HTTPException(400, "a translation block may not contain a blank line")
+    # a blank line would split the block on reload, so it collapses to a single newline
+    blocks = [
+        re.sub(r"\n\s*\n", "\n", b.replace("\r\n", "\n")).strip("\n") for b in body.translation
+    ]
     (d / "translation.md").write_text("\n\n".join(blocks) + "\n")
     return {"ok": True}
 
@@ -190,16 +191,19 @@ def load_presets() -> list[dict]:
                 for e in g.get(key) or []:
                     if isinstance(e, dict) and e.get("russian") and e.get("english"):
                         glossary.append({"ru": e["russian"], "en": e["english"]})
-            rejected = [
-                {"ru": e["for"], "en": e["term"]}
-                for e in g.get("rejected") or []
-                if isinstance(e, dict) and e.get("for") and e.get("term")
-            ]
+            for e in (
+                g.get("rejected") or []
+            ):  # two schemas in the wild: for/term, for_russian/use_instead
+                ru = isinstance(e, dict) and (e.get("for") or e.get("for_russian"))
+                if ru and e.get("term"):
+                    rejected.append({"ru": ru, "en": e["term"]})
+                if ru and e.get("use_instead"):
+                    glossary.append({"ru": ru, "en": e["use_instead"]})
         presets.append(
             {
                 "name": cfg.parent.parent.name,
                 "context": context,
-                "glossary": glossary,
+                "glossary": [dict(t) for t in dict.fromkeys(tuple(g.items()) for g in glossary)],
                 "rejected": rejected,
             }
         )
@@ -219,9 +223,14 @@ def glossary_for(preset_name: str, sentence: str) -> tuple[list[dict], list[dict
         return [], []
     seen = lexicon.lemmas(sentence)
 
-    def hit(ru: str) -> bool:  # every content word of the entry must occur in the sentence
-        words = [w for w in lexicon.WORD_RE.findall(ru) if len(w) > 2]
-        return bool(words) and all(lexicon.lemmas(w) & seen for w in words)
+    def hit(ru: str) -> bool:
+        """Every content word of the head must occur in the sentence; `a / b` heads list
+        alternatives, any of which may match."""
+        for alt in ru.split("/"):
+            words = [w for w in lexicon.WORD_RE.findall(alt) if len(w) > 2]
+            if words and all(lexicon.lemmas(w) & seen for w in words):
+                return True
+        return False
 
     return ([g for g in p["glossary"] if hit(g["ru"])], [r for r in p["rejected"] if hit(r["ru"])])
 
@@ -229,15 +238,11 @@ def glossary_for(preset_name: str, sentence: str) -> tuple[list[dict], list[dict
 # ---------- ollama ----------
 
 
-def _schema(*keys: str) -> dict:
-    return {
-        "type": "object",
-        "properties": {k: {"type": "string"} for k in keys},
-        "required": list(keys),
-    }
-
-
-VARIANT_SCHEMA = _schema("text")
+VARIANT_SCHEMA = {
+    "type": "object",
+    "properties": {"text": {"type": "string"}},
+    "required": ["text"],
+}
 CHECK_SCHEMA = {
     "type": "object",
     "properties": {
@@ -454,20 +459,19 @@ async def check(req: CheckReq) -> dict:
 # ---------- dictionary / thesaurus ----------
 
 
+@app.exception_handler(lexicon.MissingData)
+async def missing_data(_, e: lexicon.MissingData) -> JSONResponse:
+    return JSONResponse({"detail": str(e)}, status_code=503)
+
+
 @app.get("/api/lookup")
 def lookup(word: str) -> dict:
-    try:
-        return lexicon.lookup(word)
-    except lexicon.MissingData as e:
-        raise HTTPException(503, str(e)) from e
+    return lexicon.lookup(word)
 
 
 @app.get("/api/thesaurus")
 def thesaurus(word: str) -> dict:
-    try:
-        return lexicon.thesaurus(word)
-    except lexicon.MissingData as e:
-        raise HTTPException(503, str(e)) from e
+    return lexicon.thesaurus(word)
 
 
 # ---------- ui ----------

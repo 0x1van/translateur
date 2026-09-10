@@ -71,8 +71,8 @@
   worksList.addEventListener('click', e => { const a = e.target.closest('.work-item'); if (a && !e.metaKey && !e.ctrlKey) { e.preventDefault(); openWork(a.dataset.slug); } });
 
   // ---------- render ----------
-  const tokenise = s => s.replace(/[А-Яа-яЁёA-Za-z][А-Яа-яЁёA-Za-z-]*/g, m => `<span class="w">${m}</span>`);
   async function openWork(slug) {
+    if (flush) await flush();  // a pending edit belongs to the work we are leaving
     work = await api('/api/works/' + slug);
     localStorage.setItem('work', slug);
     history.replaceState(null, '', '/' + slug);
@@ -82,13 +82,13 @@
     grid.innerHTML = work.source.map((block, i) => `
       <div class="row" id="p${i}" data-i="${i}" data-n0="${n + 1}">
         <div class="cell src" lang="ru"><p>${work.sentences[i].map((s, j) =>
-          `<span class="sent" data-j="${j}"><sup class="n" title="translate this sentence" role="button" tabindex="0">${++n}</sup>${tokenise(esc(s))}</span>`).join(' ')}</p>
+          `<span class="sent" data-j="${j}"><sup class="n" title="translate this sentence" role="button" tabindex="0">${++n}</sup>${tok(s, 0)}</span>`).join(' ')}</p>
           <div class="variants" hidden></div></div>
         <div class="cell tr"><p class="en" lang="en-GB" title="click a word to look it up · click elsewhere to edit"></p><textarea class="tr" lang="en-GB" spellcheck="true" placeholder="…"></textarea>
           <div class="tools"><button type="button" class="check">check grammar</button></div><div class="issues"></div></div>
       </div>`).join('');
     grid.querySelectorAll('.cell.tr').forEach((cell, i) => { $('textarea.tr', cell).value = work.translation[i]; view(cell); });
-    setStatus('');
+    if (!status.classList.contains('err')) setStatus('');
   }
   const grow = ta => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; };
 
@@ -117,26 +117,33 @@
     at = at ?? ta.value.length; ta.setSelectionRange(at, at); ta.focus();
   }
   grid.addEventListener('focusout', e => {
-    if (e.target.matches('textarea.tr')) { const c = e.target.closest('.cell.tr'); c.classList.remove('editing'); view(c); }
+    if (!e.target.matches('textarea.tr')) return;
+    const ta = e.target, c = ta.closest('.cell.tr');
+    ta.sel = ta.selectionStart !== ta.selectionEnd ? [ta.selectionStart, ta.selectionEnd] : null;  // survives the blur a button click causes
+    c.classList.remove('editing'); view(c);
   });
 
   // ---------- save ----------
-  let saveTimer;
+  let saveTimer, flush = null;
   function save() {
     clearTimeout(saveTimer);
     setStatus('saving…');
-    saveTimer = setTimeout(async () => {
-      work.translation = [...grid.querySelectorAll('textarea.tr')].map(t => t.value);
-      grid.querySelectorAll('.cell.tr:not(.editing)').forEach(view);
-      try { await api('/api/works/' + work.slug, { method: 'PUT', body: { translation: work.translation } }); setStatus('saved ·'); }
+    const w = work;
+    w.translation = [...grid.querySelectorAll('textarea.tr')].map(t => t.value);
+    grid.querySelectorAll('.cell.tr:not(.editing)').forEach(view);
+    flush = async () => {
+      clearTimeout(saveTimer); flush = null;
+      try { await api('/api/works/' + w.slug, { method: 'PUT', keepalive: true, body: { translation: w.translation } }); setStatus('saved ·'); }
       catch (e) { setStatus(e.message, true); }
-    }, 700);
+    };
+    saveTimer = setTimeout(flush, 700);
   }
+  addEventListener('pagehide', () => flush?.());
   grid.addEventListener('input', e => { if (e.target.matches('textarea.tr')) { pop.hidden = true; grow(e.target); save(); } });
 
   // ---------- sentence → variants ----------
   grid.addEventListener('click', e => {
-    const n = e.target.closest('.n');
+    const n = e.target.closest('.sent .n');  // the English numbers are labels, not buttons
     if (n) return translateSentence(n.closest('.sent'));
     const en = e.target.closest('p.en');
     if (en) {
@@ -176,8 +183,10 @@
     $('.guidance', box).onkeydown = ev => { if (ev.key === 'Enter') translateSentence(sent, ev.target.value); };
     const v = currentVoice();
     const freedom = Object.fromEntries(Object.entries(v.freedom).map(([k, name]) => [k, FREEDOM[name] ?? FREEDOM.free]));
+    box.ctl?.abort();
+    const ctl = box.ctl = new AbortController();
     try {
-      const out = await api('/api/translate', { method: 'POST', body: {
+      const out = await api('/api/translate', { method: 'POST', signal: ctl.signal, body: {
         model: modelSel.value, preset: v.name, context: v.context, freedom,
         sentence: sents[j], prev_ru, prev_en, next_ru, guidance } });
       $('.thinking', box).outerHTML = ['A', 'B', 'C'].map(k =>
@@ -186,14 +195,15 @@
           out.glossary.map(g => `${esc(g.ru)} → ${esc(g.en)}`).join(' · ')}${
           out.rejected.map(r => ` · not “${esc(r.en)}”`).join('')}</p>` : '');
       box.querySelectorAll('.variant').forEach(b => b.onclick = () => insert(row, out[b.dataset.k]));
-    } catch (e) { $('.thinking', box).outerHTML = `<p class="clean">${esc(e.message)}</p>`; }
+    } catch (e) { if (e.name !== 'AbortError') $('.thinking', box).outerHTML = `<p class="clean">${esc(e.message)}</p>`; }
   }
 
-  /* Insert a variant: replace the selection if any, else append. Free writing = just type. */
+  /* Insert a variant: replace the selection made while editing, if any, else append. */
   function insert(row, text) {
     const ta = $('textarea.tr', row);
-    const a = ta.selectionStart, b = ta.selectionEnd;
-    if (document.activeElement === ta && a !== b) {
+    const [a, b] = ta.sel || [0, 0];
+    ta.sel = null;
+    if (a !== b && ta.value.length >= b) {
       ta.setRangeText(text, a, b, 'end');
     } else {
       const cur = ta.value.replace(/\s+$/, '');
