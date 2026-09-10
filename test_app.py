@@ -80,7 +80,9 @@ os.environ.update(
 import app as appmod
 
 RU = "Он сидел у окна. Жизнь прошла!\n\n— Ну что? — сказал он. — Пойдём.\n\nКонец."
-HAVE_DATA = appmod.lexicon.RU_EN.exists() and appmod.lexicon.MOBY.exists()
+HAVE_DATA = all(
+    p.exists() for p in (appmod.lexicon.RU_EN, appmod.lexicon.EN_RU, appmod.lexicon.MOBY)
+)
 
 # ---- unit ----
 
@@ -135,6 +137,7 @@ def test_lexicon():
     d = appmod.lexicon.lookup("окна")
     assert d["lemmas"][0] == "окно" and "window" in d["entries"][0]["translations"]
     assert "casement" in appmod.lexicon.thesaurus("windows")["synonyms"]
+    assert "окошко" in appmod.lexicon.thesaurus("окна")["synonyms"]  # round trip ru→en→ru
 
 
 # ---- e2e ----
@@ -205,23 +208,34 @@ def test_e2e(page, server_url):
     assert page.locator(".row").nth(1).locator("textarea.tr").input_value() == ""
 
     if HAVE_DATA:
-        # dictionary popover on a Russian word; alternatives + Moby on an English word
+        # russian pane: click a word → dictionary + ru near-synonyms; click a translation to insert
+        ta0 = page.locator(".row").nth(0).locator("textarea.tr")
+        ta0.fill("")
         page.locator(".row").nth(0).locator(".w", has_text="окна").click()
         page.wait_for_selector("#pop h4")
         assert page.locator("#pop h4").inner_text() == "окно"
-        assert "window" in page.locator("#pop").inner_text()
-        page.keyboard.press("Escape")
+        assert "окошко" in page.locator("#pop section span.syn").all_inner_texts()
+        page.locator("#pop button.syn", has_text="window").first.click()
+        assert ta0.input_value() == "window" and page.locator("#pop").is_hidden()
+        # english pane: a real mouse click inside a word opens alternatives (llm) + Moby
         ta2.fill("the window.")
+        box = ta2.bounding_box()
+        page.mouse.click(box["x"] + 4, box["y"] + 12)  # lands in "the"
+        page.wait_for_selector("#pop .alts .syn")
+        assert page.locator("#pop h4").inner_text() == "the"
+        assert page.locator("#pop .alts .syn").all_inner_texts() == ["other the", "bold the"]
+        # select a word, press "?" → same popover; Moby chip replaces the selection
+        page.keyboard.press("Escape")
         ta2.evaluate("t => { t.focus(); t.setSelectionRange(4, 10); }")
-        ta2.dispatch_event("mouseup")
-        page.wait_for_selector("#pop .syn")
+        page.locator(".row").nth(2).locator(".ask").click()
+        page.wait_for_selector("#pop .moby .syn")
+        assert page.locator("#pop h4").inner_text() == "window"
         page.locator("#pop .moby .syn", has_text="casement").first.click()
         assert ta2.input_value() == "the casement."
-        # caret inside a word (no selection) also triggers; llm alternatives are clickable
+        # caret inside a word (no selection), synthetic mouseup; an llm chip replaces the word
         ta2.evaluate("t => { t.focus(); t.setSelectionRange(6, 6); }")
         ta2.dispatch_event("mouseup")
         page.wait_for_selector("#pop .alts .syn")
         assert page.locator("#pop h4").inner_text() == "casement"
-        assert page.locator("#pop .alts .syn").count() == 2  # the original is filtered out
         page.locator("#pop .alts .syn", has_text="bold casement").click()
         assert ta2.input_value() == "the bold casement."

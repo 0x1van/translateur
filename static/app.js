@@ -81,7 +81,7 @@
           `<span class="sent" data-j="${j}"><sup class="n" title="translate this sentence" role="button" tabindex="0">${++n}</sup>${tokenise(esc(s))}</span>`).join(' ')}</p>
           <div class="variants" hidden></div></div>
         <div class="cell tr"><textarea class="tr" lang="en-GB" spellcheck="true" placeholder="…"></textarea>
-          <div class="tools"><button type="button" class="check">check grammar</button></div><div class="issues"></div></div>
+          <div class="tools"><button type="button" class="ask" title="alternatives &amp; related words for the word at the cursor">?</button><button type="button" class="check">check grammar</button></div><div class="issues"></div></div>
       </div>`).join('');
     grid.querySelectorAll('textarea.tr').forEach((ta, i) => { ta.value = work.translation[i]; grow(ta); });
     setStatus('');
@@ -107,6 +107,8 @@
     if (n) return translateSentence(n.closest('.sent'));
     const w = e.target.closest('.w');
     if (w) return showDictionary(w);
+    const ask = e.target.closest('.ask');
+    if (ask) { const ta = $('textarea.tr', ask.closest('.row')), r = ask.getBoundingClientRect(); return wordPop(ta, r.left + scrollX, r.bottom + scrollY); }
     const chk = e.target.closest('.check');
     if (chk) return checkGrammar(chk.closest('.row'));
     const iss = e.target.closest('.issue');
@@ -200,21 +202,29 @@
   document.addEventListener('mousedown', e => { if (!pop.contains(e.target)) pop.hidden = true; });
   document.addEventListener('keydown', e => { if (e.key === 'Escape') pop.hidden = true; });
 
+  const chips = (list, tag = 'button') => list.map(s => `<${tag} type="button" class="syn">${esc(s)}</${tag}>`).join(' ');
+
+  /* Russian pane: click a word → dictionary (click a translation to insert it into the English
+     draft) + near-synonyms (WikDict round trip). */
   async function showDictionary(w) {
-    const r = w.getBoundingClientRect(), x = r.left + scrollX, y = r.bottom + scrollY;
+    const r = w.getBoundingClientRect(), x = r.left + scrollX, y = r.bottom + scrollY, row = w.closest('.row');
     showPop('<p class="thinking">looking up</p>', x, y);
     try {
-      const d = await api('/api/lookup?word=' + encodeURIComponent(w.textContent));
-      showPop(`<h4 lang="ru">${esc(d.lemmas[0] || d.word)}</h4><span class="tag">${esc(d.grammar)}</span>` +
+      const [d, t] = await Promise.all([
+        api('/api/lookup?word=' + encodeURIComponent(w.textContent)),
+        api('/api/thesaurus?word=' + encodeURIComponent(w.textContent)).catch(() => ({ synonyms: [] }))]);
+      showPop(`<h4 lang="ru">${esc(d.lemmas[0] || d.word)}</h4><span class="tag">${esc(d.grammar)} · click a translation to insert</span>` +
         (d.entries.length ? '<ul>' + d.entries.map(e =>
           `<li>${e.lemma !== d.lemmas[0] ? `<span lang="ru">${esc(e.lemma)}</span> ` : ''}${
-            e.senses.length ? `<span class="sense" lang="ru">${esc(e.senses.join(' | '))}</span> ` : ''}${esc(e.translations.join(', '))}</li>`).join('') + '</ul>'
-          : '<p class="none">nothing in the dictionary ·</p>'), x, y);
+            e.senses.length ? `<span class="sense" lang="ru">${esc(e.senses.join(' | '))}</span> ` : ''}${chips(e.translations)}</li>`).join('') + '</ul>'
+          : '<p class="none">nothing in the dictionary ·</p>') +
+        (t.synonyms.length ? `<section lang="ru"><span class="tag">related words (ru)</span>${chips(t.synonyms, 'span')}</section>` : ''), x, y);
+      pop.onclick = ev => { const s = ev.target.closest('button.syn'); if (s) { insert(row, s.textContent); pop.hidden = true; } };
     } catch (e) { showPop(`<p class="none">${esc(e.message)}</p>`, x, y); }
   }
 
-  /* English pane, DeepL-style: click inside a word (or select a phrase) → one popover with
-     the model's alternatives for that span (sampled wild) and Moby's related words. */
+  /* English pane, DeepL-style: click inside a word, select a phrase, or press "?" → the model's
+     alternatives for that span (sampled wild) + Moby's related words; click any to swap it in. */
   let altCtl;
   grid.addEventListener('mouseup', e => { const ta = e.target.closest('textarea.tr'); if (ta) wordPop(ta, e.pageX, e.pageY); });
   async function wordPop(ta, x, y) {
@@ -224,7 +234,6 @@
     while (a < b && /\s/.test(v[a])) a++; while (b > a && /\s/.test(v[b - 1])) b--;
     const term = v.slice(a, b);
     if (!/[A-Za-z]/.test(term) || term.length < 2) { pop.hidden = true; return; }
-    const chips = list => list.map(s => `<button type="button" class="syn">${esc(s)}</button>`).join(' ');
     showPop(`<h4>${esc(term)}</h4><span class="tag">alternatives · ${esc(modelSel.value)} · wild · click to replace</span>
       <section class="alts"><p class="thinking">thinking</p></section><section class="moby"></section>`, x, y);
     const alts = $('.alts', pop), moby = $('.moby', pop);

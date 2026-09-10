@@ -138,7 +138,9 @@ textarea.tr::placeholder { color: var(--color-border); font-style: italic; }
 .pop li { padding: 0.15rem 0; border-bottom: 1px dotted var(--color-border); }
 .pop .syn { display: inline; border: 0; padding: 0 0.3rem 0 0; text-transform: none; letter-spacing: 0; font-family: var(--font-serif); font-size: 0.95rem; }
 .pop .syn:not(:last-child)::after { content: ","; color: var(--color-text-muted); }
-.pop .syn:hover { box-shadow: none; background: var(--color-accent); }
+.pop button.syn:hover { box-shadow: none; background: var(--color-accent); }
+.pop span.syn { cursor: default; }
+.tools .ask { padding: 0.25rem 0.5rem; border-color: var(--color-border); font-family: var(--font-serif); font-size: 0.9rem; }
 .pop section { margin-top: var(--space-xs); }
 .pop .none { color: var(--color-text-muted); font-style: italic; }
 

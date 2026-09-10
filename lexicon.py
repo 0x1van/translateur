@@ -12,8 +12,10 @@ import pymorphy3
 
 DATA = Path(__file__).parent / "data"
 RU_EN = DATA / "ru-en.sqlite3"
+EN_RU = DATA / "en-ru.sqlite3"
 MOBY = DATA / "mthesaur.txt"
 WORD_RE = re.compile(r"[А-Яа-яЁё][А-Яа-яЁё-]*")
+_WIKI_RE = re.compile(r"\[\[(?:[^|\]]*\|)?([^\]]*)\]\]")
 
 
 class MissingData(RuntimeError):
@@ -83,8 +85,55 @@ def _moby() -> dict[str, list[str]]:
     return table
 
 
+def _ru_candidates(word: str) -> list[str]:
+    parses = _morph().parse(word)
+    out: list[str] = []
+    for c in [p.normal_form for p in parses] + [word.lower(), word.lower().replace("ё", "е")]:
+        if c not in out:
+            out.append(c)
+    return out
+
+
+def thesaurus_ru(word: str) -> dict:
+    """Russian near-synonyms by round trip: ru→en top translations, then en→ru back. No Russian
+    thesaurus is freely downloadable; the two WikDict halves together are a fair stand-in."""
+    if not EN_RU.exists():
+        raise MissingData("data/en-ru.sqlite3 missing — run: uv run python fetch_data.py")
+    cands = _ru_candidates(word.strip().strip("«»“”\"'.,;:!?…()—-"))
+    fwd = sqlite3.connect(f"file:{RU_EN}?mode=ro", uri=True)
+    marks = ",".join("?" * len(cands))
+    en = [
+        t.strip()
+        for (tl,) in fwd.execute(
+            f"SELECT trans_list FROM simple_translation WHERE written_rep IN ({marks}) "
+            "ORDER BY max_score DESC LIMIT 4",
+            cands,
+        )
+        for t in tl.split(" | ")
+    ][:8]
+    fwd.close()
+    if not en:
+        return {"word": cands[0], "synonyms": []}
+    back = sqlite3.connect(f"file:{EN_RU}?mode=ro", uri=True)
+    seen: dict[str, int] = {}
+    for (tl,) in back.execute(
+        f"SELECT trans_list FROM simple_translation WHERE written_rep IN ({','.join('?' * len(en))}) "
+        "ORDER BY max_score DESC",
+        en,
+    ):
+        for t in tl.split(" | "):
+            t = _WIKI_RE.sub(r"\1", t.strip().replace("\u0301", ""))  # stress marks, [[links]]
+            if t and t not in cands:
+                seen[t] = seen.get(t, 0) + 1
+    back.close()
+    syn = sorted(seen, key=lambda t: -seen[t])[:40]
+    return {"word": cands[0], "synonyms": syn}
+
+
 def thesaurus(word: str) -> dict:
     """English word → Moby synonyms. Tries a few crude stems; no lemmatiser."""
+    if WORD_RE.match(word.strip()):
+        return thesaurus_ru(word)
     w = word.strip().lower()
     # ponytail: suffix stripping instead of an English lemmatiser; add `wn` if it misses too often
     tries = [
@@ -109,4 +158,5 @@ if __name__ == "__main__":
     assert "окно" in r["lemmas"] and any("window" in e["translations"] for e in r["entries"]), r
     assert "сидеть" in lemmas("он сидел у окна")
     assert "casement" in thesaurus("windows")["synonyms"]
+    assert "окошко" in thesaurus("окна")["synonyms"], thesaurus("окна")
     print("lexicon ok")

@@ -7,7 +7,7 @@ bilingual post pair.
 ```bash
 cd tools/translator
 uv sync --all-groups
-uv run python fetch_data.py        # once: WikDict ru-en (17 MB) + Moby thesaurus (25 MB)
+uv run python fetch_data.py        # once: WikDict ru-en + en-ru (38 MB) + Moby thesaurus (25 MB)
 uv run uvicorn app:app --reload    # http://127.0.0.1:8000
 ```
 
@@ -15,8 +15,8 @@ uv run uvicorn app:app --reload    # http://127.0.0.1:8000
 - **superscript number** on a sentence — three variants (A/B/C) from the model; click one to
   insert at the cursor / replace the selection / append. Type freely in the right pane; it
   autosaves to `works/<slug>/translation.md`.
-- **click a Russian word** — dictionary (lemma, grammar, WikDict senses).
-- **click inside an English word** (or select a phrase) — one popover: the model's alternatives for that span, sampled wild, plus Moby's related words; click any to swap it in.
+- **click a Russian word** — dictionary (lemma, grammar, WikDict senses; click a translation to insert it) plus Russian near-synonyms (WikDict round trip ru→en→ru).
+- **click inside an English word**, select a phrase, or press **?** — one popover: the model's alternatives for that span, sampled wild, plus Moby's related words; click any to swap it in.
 - **check grammar** — model pass per paragraph; click an issue to apply the fix. Spelling is the
   browser's own (`spellcheck` on the pane).
 - **voice** — presets are read from `projects/*/translation/config.md` (variant scheme +
