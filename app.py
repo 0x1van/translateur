@@ -110,6 +110,10 @@ class SaveWork(BaseModel):
     translation: list[str]
 
 
+class PatchWork(BaseModel):
+    blocks: dict[int, str]  # index → new text; the client sends only what changed
+
+
 @app.get("/api/works")
 def list_works() -> list[dict]:
     if not WORKS_DIR.exists():
@@ -142,16 +146,34 @@ def get_work(slug: str) -> dict:
     return load_work(slug)
 
 
+def _clean_block(b: str) -> str:
+    # a blank line would split the block on reload, so it collapses to a single newline
+    return re.sub(r"\n\s*\n", "\n", b.replace("\r\n", "\n")).strip("\n")
+
+
+def _write_translation(d: Path, blocks: list[str]) -> None:
+    (d / "translation.md").write_text("\n\n".join(blocks) + "\n")
+
+
 @app.put("/api/works/{slug}")
 def save_work(slug: str, body: SaveWork) -> dict:
     d = work_dir(slug)
     if not (d / "source.md").exists():
         raise HTTPException(404, "no such work")
-    # a blank line would split the block on reload, so it collapses to a single newline
-    blocks = [
-        re.sub(r"\n\s*\n", "\n", b.replace("\r\n", "\n")).strip("\n") for b in body.translation
-    ]
-    (d / "translation.md").write_text("\n\n".join(blocks) + "\n")
+    _write_translation(d, [_clean_block(b) for b in body.translation])
+    return {"ok": True}
+
+
+@app.patch("/api/works/{slug}")
+def patch_work(slug: str, body: PatchWork) -> dict:
+    """Update some blocks; the file is rewritten whole, but the request stays small."""
+    w = load_work(slug)
+    blocks = list(w["translation"])
+    for i, text in body.blocks.items():
+        if not 0 <= i < len(blocks):
+            raise HTTPException(400, f"block {i} out of range")
+        blocks[i] = _clean_block(text)
+    _write_translation(work_dir(slug), blocks)
     return {"ok": True}
 
 
@@ -227,7 +249,8 @@ def glossary_for(preset_name: str, sentence: str) -> tuple[list[dict], list[dict
         """Every content word of the head must occur in the sentence; `a / b` heads list
         alternatives, any of which may match."""
         for alt in ru.split("/"):
-            words = [w for w in lexicon.WORD_RE.findall(alt) if len(w) > 2]
+            all_words = lexicon.WORD_RE.findall(alt)
+            words = [w for w in all_words if len(w) > 2] or all_words  # `щи` is a real head
             if words and all(lexicon.lemmas(w) & seen for w in words):
                 return True
         return False

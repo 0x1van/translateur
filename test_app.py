@@ -76,6 +76,7 @@ PROJECTS = Path(tempfile.mkdtemp())
     "  - russian: клоп / насекомое\n    english: bug\n"
     "  - russian: выгода\n    english: metrics\n"
     "cultural_references:\n  - original: Бокль (Henry Thomas Buckle)\n    modern: Pinker\n"
+    "  - russian: щи\n    english: shchi\n"
     "  - russian: ученье свет\n    english: learning enlightens\nrejected:\n"
     "  - term: casement\n    for: окно\n    reason: too fancy\n"
     "  - term: advantage\n    for_russian: выгода\n    use_instead: context-dependent\n"
@@ -129,6 +130,18 @@ def _plain(tmp_path):
     return d
 
 
+def test_patch_blocks():
+    d = WORKS / "patchy"
+    d.mkdir()
+    (d / "source.md").write_text("Раз.\n\nДва.\n\nТри.\n")
+    appmod.patch_work("patchy", appmod.PatchWork(blocks={1: "two\n\n\nlines", 2: "three"}))
+    assert (d / "translation.md").read_text() == "\n\ntwo\nlines\n\nthree\n"
+    appmod.patch_work("patchy", appmod.PatchWork(blocks={0: "one"}))
+    assert appmod.load_work("patchy")["translation"] == ["one", "two\nlines", "three"]
+    with pytest.raises(appmod.HTTPException):
+        appmod.patch_work("patchy", appmod.PatchWork(blocks={7: "x"}))
+
+
 def test_untranslated():
     assert appmod.untranslated("В то время мне было двадцать четыре года.")
     assert not appmod.untranslated("Back then I was twenty-four, in Moscow.")
@@ -161,6 +174,7 @@ def test_presets_parse_project_config():
     ]
     g, r = appmod.glossary_for("demo", "Где выгода?")
     assert g == [{"ru": "выгода", "en": "metrics"}] and r == [{"ru": "выгода", "en": "advantage"}]
+    assert appmod.glossary_for("demo", "Ели щи.")[0] == [{"ru": "щи", "en": "shchi"}]
     assert appmod.glossary_for("demo", "Читал Бокля.")[0] == [
         {"ru": "Бокль (Henry Thomas Buckle)", "en": "Pinker"}
     ]
@@ -253,8 +267,16 @@ def test_e2e(page, server_url):
     page.wait_for_selector(".variant")
     page.locator(".variant[data-k=A]").click()
     assert ta.input_value() == "A of Он сидел у окна. (glossed) C of Жизнь прошла!"
-    page.locator(".variant[data-k=B]").click()  # no selection now → appends
-    assert ta.input_value().endswith("Жизнь прошла! B of Он сидел у окна.")
+    page.locator(".variant[data-k=B]").click()  # continues right after the previous insert
+    assert (
+        ta.input_value()
+        == "A of Он сидел у окна. (glossed) B of Он сидел у окна. C of Жизнь прошла!"
+    )
+    # a caret left in the middle of the text is where the next variant lands
+    _edit(page, 0)
+    ta.evaluate("t => t.setSelectionRange(4, 4)")  # after "A of"
+    page.locator(".variant[data-k=C]").click()
+    assert ta.input_value().startswith("A of C of Он сидел у окна. Он сидел у окна. (glossed)")
     ta.evaluate(
         "t => { t.value = 'B of Он сидел у окна. C of Жизнь прошла!'; t.dispatchEvent(new Event('input', {bubbles: true})); }"
     )

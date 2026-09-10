@@ -74,6 +74,7 @@
   async function openWork(slug) {
     if (flush) await flush();  // a pending edit belongs to the work we are leaving
     work = await api('/api/works/' + slug);
+    work.saved = [...work.translation];  // what the server has, per block
     localStorage.setItem('work', slug);
     history.replaceState(null, '', '/' + slug);
     worksList.querySelectorAll('.work-item').forEach(b => b.classList.toggle('active', b.dataset.slug === slug));
@@ -120,11 +121,13 @@
   grid.addEventListener('focusout', e => {
     if (!e.target.matches('textarea.tr')) return;
     const ta = e.target, c = ta.closest('.cell.tr');
-    ta.sel = ta.selectionStart !== ta.selectionEnd ? [ta.selectionStart, ta.selectionEnd] : null;  // survives the blur a button click causes
+    ta.sel = [ta.selectionStart, ta.selectionEnd];  // caret or selection, surviving the blur a button click causes
     c.classList.remove('editing'); view(c);
   });
 
   // ---------- save ----------
+  /* Only the blocks that changed since the last successful save are sent, so a save is small
+     enough for keepalive on unload (browsers cap those bodies at ~64 KB). */
   let saveTimer, flush = null;
   function save() {
     clearTimeout(saveTimer);
@@ -134,10 +137,13 @@
     grid.querySelectorAll('.cell.tr:not(.editing)').forEach(view);
     flush = async (unloading = false) => {
       clearTimeout(saveTimer); flush = null;
-      // keepalive lets the PUT outlive the page, but browsers cap such bodies at ~64 KB
-      const keepalive = unloading && JSON.stringify(w.translation).length < 60000;
-      try { await api('/api/works/' + w.slug, { method: 'PUT', keepalive, body: { translation: w.translation } }); setStatus('saved ·'); }
-      catch (e) { setStatus(e.message, true); }
+      const blocks = Object.fromEntries(w.translation.map((t, i) => [i, t]).filter(([i, t]) => t !== w.saved[i]));
+      if (!Object.keys(blocks).length) { setStatus('saved ·'); return; }
+      try {
+        await api('/api/works/' + w.slug, { method: 'PATCH', keepalive: unloading, body: { blocks } });
+        for (const i in blocks) w.saved[i] = blocks[i];
+        setStatus('saved ·');
+      } catch (e) { setStatus(e.message, true); }
     };
     saveTimer = setTimeout(() => flush?.(), 700);
   }
@@ -201,17 +207,20 @@
     } catch (e) { if (e.name !== 'AbortError') $('.thinking', box).outerHTML = `<p class="clean">${esc(e.message)}</p>`; }
   }
 
-  /* Insert a variant: replace the selection made while editing, if any, else append. */
+  /* Insert a variant or dictionary chip where the translator last was: over the selection they
+     made, at the caret they left, or appended when the paragraph was never entered. */
   function insert(row, text) {
-    const ta = $('textarea.tr', row);
-    const [a, b] = ta.sel || [0, 0];
+    const ta = $('textarea.tr', row), v = ta.value;
+    const sel = ta.sel && ta.sel[1] <= v.length ? ta.sel : null;
     ta.sel = null;
-    if (a !== b && ta.value.length >= b) {
-      ta.setRangeText(text, a, b, 'end');
+    if (sel) {
+      const [a, b] = sel;
+      const before = a > 0 && !/\s/.test(v[a - 1]) ? ' ' : '', after = b < v.length && !/\s/.test(v[b]) ? ' ' : '';
+      ta.setRangeText(before + text + after, a, b, 'end');
+      ta.sel = [ta.selectionEnd, ta.selectionEnd];  // a second variant continues from here
     } else {
-      const cur = ta.value.replace(/\s+$/, '');
+      const cur = v.replace(/\s+$/, '');
       ta.value = cur ? cur + ' ' + text : text;
-      ta.setSelectionRange(ta.value.length, ta.value.length);
     }
     grow(ta); save();
   }
@@ -238,7 +247,11 @@
   function applyIssue(btn) {
     const row = btn.closest('.row'), ta = $('textarea.tr', row), q = btn.dataset.q, f = btn.dataset.f;
     let at = +btn.dataset.start;
-    if (ta.value.slice(at, at + q.length) !== q) at = ta.value.indexOf(q);
+    if (ta.value.slice(at, at + q.length) !== q) {  // text moved since the check: nearest occurrence wins
+      let best = -1;
+      for (let p = ta.value.indexOf(q); p >= 0; p = ta.value.indexOf(q, p + 1)) if (best < 0 || Math.abs(p - at) < Math.abs(best - at)) best = p;
+      at = best;
+    }
     if (at < 0) { btn.remove(); return; }
     ta.value = ta.value.slice(0, at) + f + ta.value.slice(at + q.length);
     const shift = f.length - q.length;
