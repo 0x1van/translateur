@@ -141,7 +141,6 @@ textarea.tr::placeholder { color: var(--color-border); font-style: italic; }
 .pop .syn:not(:last-child)::after { content: ","; color: var(--color-text-muted); }
 .pop button.syn:hover { box-shadow: none; background: var(--color-accent); }
 .pop span.syn { cursor: default; }
-.tools .ask { padding: 0.25rem 0.5rem; border-color: var(--color-border); font-family: var(--font-serif); font-size: 0.9rem; }
 .pop section { margin-top: var(--space-xs); }
 .pop .none { color: var(--color-text-muted); font-style: italic; }
 

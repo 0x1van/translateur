@@ -224,10 +224,9 @@ def test_e2e(page, server_url):
         page.wait_for_selector("#pop .alts .syn")
         assert page.locator("#pop h4").inner_text() == "the"
         assert page.locator("#pop .alts .syn").all_inner_texts() == ["other the", "bold the"]
-        # select a word, press "?" → same popover; Moby chip replaces the selection
-        page.keyboard.press("Escape")
+        # select a word → same popover; Moby chip replaces the selection
         ta2.evaluate("t => { t.focus(); t.setSelectionRange(4, 10); }")
-        page.locator(".row").nth(2).locator(".ask").click()
+        ta2.dispatch_event("mouseup")
         page.wait_for_selector("#pop .moby .syn")
         assert page.locator("#pop h4").inner_text() == "window"
         page.locator("#pop .moby .syn", has_text="casement").first.click()

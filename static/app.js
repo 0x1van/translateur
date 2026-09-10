@@ -81,7 +81,7 @@
           `<span class="sent" data-j="${j}"><sup class="n" title="translate this sentence" role="button" tabindex="0">${++n}</sup>${tokenise(esc(s))}</span>`).join(' ')}</p>
           <div class="variants" hidden></div></div>
         <div class="cell tr"><textarea class="tr" lang="en-GB" spellcheck="true" placeholder="…"></textarea>
-          <div class="tools"><button type="button" class="ask" title="alternatives &amp; related words for the word at the cursor">?</button><button type="button" class="check">check grammar</button></div><div class="issues"></div></div>
+          <div class="tools"><button type="button" class="check">check grammar</button></div><div class="issues"></div></div>
       </div>`).join('');
     grid.querySelectorAll('textarea.tr').forEach((ta, i) => { ta.value = work.translation[i]; grow(ta); });
     setStatus('');
@@ -107,8 +107,6 @@
     if (n) return translateSentence(n.closest('.sent'));
     const w = e.target.closest('.w');
     if (w) return showDictionary(w);
-    const ask = e.target.closest('.ask');
-    if (ask) { const ta = $('textarea.tr', ask.closest('.row')), r = ask.getBoundingClientRect(); return wordPop(ta, r.left + scrollX, r.bottom + scrollY); }
     const chk = e.target.closest('.check');
     if (chk) return checkGrammar(chk.closest('.row'));
     const iss = e.target.closest('.issue');
@@ -223,7 +221,7 @@
     } catch (e) { showPop(`<p class="none">${esc(e.message)}</p>`, x, y); }
   }
 
-  /* English pane, DeepL-style: click inside a word, select a phrase, or press "?" → the model's
+  /* English pane, DeepL-style: click inside a word or select a phrase → the model's
      alternatives for that span (sampled wild) + Moby's related words; click any to swap it in. */
   let altCtl;
   grid.addEventListener('mouseup', e => { const ta = e.target.closest('textarea.tr'); if (ta) wordPop(ta, e.pageX, e.pageY); });
