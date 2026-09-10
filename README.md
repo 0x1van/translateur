@@ -16,7 +16,7 @@ uv run uvicorn app:app --reload    # http://127.0.0.1:8000
   insert at the cursor / replace the selection / append. Type freely in the right pane; it
   autosaves to `works/<slug>/translation.md`.
 - **click a Russian word** — dictionary (lemma, grammar, WikDict senses).
-- **select an English word** — thesaurus; click a synonym to replace.
+- **click inside an English word** (or select a phrase) — one popover: the model's alternatives for that span, sampled wild, plus Moby's related words; click any to swap it in.
 - **check grammar** — model pass per paragraph; click an issue to apply the fix. Spelling is the
   browser's own (`spellcheck` on the pane).
 - **voice** — presets are read from `projects/*/translation/config.md` (variant scheme +

@@ -99,7 +99,7 @@
       catch (e) { setStatus(e.message, true); }
     }, 700);
   }
-  grid.addEventListener('input', e => { if (e.target.matches('textarea.tr')) { grow(e.target); save(); } });
+  grid.addEventListener('input', e => { if (e.target.matches('textarea.tr')) { pop.hidden = true; grow(e.target); save(); } });
 
   // ---------- sentence → variants ----------
   grid.addEventListener('click', e => {
@@ -191,9 +191,9 @@
     btn.remove(); grow(ta); save();
   }
 
-  // ---------- popover: dictionary (ru) & thesaurus (en) ----------
+  // ---------- popovers: one box, two panes ----------
   function showPop(html, x, y) {
-    pop.innerHTML = html; pop.hidden = false;
+    pop.innerHTML = html; pop.hidden = false; pop.onclick = null;
     const left = Math.min(x, window.innerWidth - pop.offsetWidth - 16);
     pop.style.left = Math.max(8, left) + 'px'; pop.style.top = (y + 6) + 'px';
   }
@@ -213,22 +213,37 @@
     } catch (e) { showPop(`<p class="none">${esc(e.message)}</p>`, x, y); }
   }
 
-  grid.addEventListener('mouseup', async e => {
-    const ta = e.target.closest('textarea.tr');
-    if (!ta) return;
-    const sel = ta.value.slice(ta.selectionStart, ta.selectionEnd);
-    if (!/^[A-Za-z][A-Za-z'-]*$/.test(sel.trim()) || sel.trim().length < 2) return;
-    const a = ta.selectionStart, b = ta.selectionEnd, x = e.pageX, y = e.pageY;
+  /* English pane, DeepL-style: click inside a word (or select a phrase) → one popover with
+     the model's alternatives for that span (sampled wild) and Moby's related words. */
+  let altCtl;
+  grid.addEventListener('mouseup', e => { const ta = e.target.closest('textarea.tr'); if (ta) wordPop(ta, e.pageX, e.pageY); });
+  async function wordPop(ta, x, y) {
+    const v = ta.value, W = /[A-Za-z'’-]/;
+    let a = ta.selectionStart, b = ta.selectionEnd;
+    if (a === b) { while (a > 0 && W.test(v[a - 1])) a--; while (b < v.length && W.test(v[b])) b++; }
+    while (a < b && /\s/.test(v[a])) a++; while (b > a && /\s/.test(v[b - 1])) b--;
+    const term = v.slice(a, b);
+    if (!/[A-Za-z]/.test(term) || term.length < 2) { pop.hidden = true; return; }
+    const chips = list => list.map(s => `<button type="button" class="syn">${esc(s)}</button>`).join(' ');
+    showPop(`<h4>${esc(term)}</h4><span class="tag">alternatives · ${esc(modelSel.value)} · wild · click to replace</span>
+      <section class="alts"><p class="thinking">thinking</p></section><section class="moby"></section>`, x, y);
+    const alts = $('.alts', pop), moby = $('.moby', pop);
+    pop.onclick = ev => {
+      const s = ev.target.closest('.syn');
+      if (s) { ta.setRangeText(s.textContent, a, b, 'select'); ta.focus(); grow(ta); save(); pop.hidden = true; }
+    };
+    if (!/\s/.test(term)) api('/api/thesaurus?word=' + encodeURIComponent(term)).then(t => {
+      if (t.synonyms.length) moby.innerHTML = '<span class="tag">related words (Moby)</span>' + chips(t.synonyms.slice(0, 80));
+    }).catch(() => {});
+    altCtl?.abort();
+    const ctl = altCtl = new AbortController(), vc = currentVoice();
     try {
-      const t = await api('/api/thesaurus?word=' + encodeURIComponent(sel.trim()));
-      showPop(`<h4>${esc(t.word)}</h4><span class="tag">related words (Moby) · click to replace</span>` +
-        (t.synonyms.length ? t.synonyms.slice(0, 120).map(s => `<button type="button" class="syn">${esc(s)}</button>`).join(' ')
-          : '<p class="none">no entry ·</p>'), x, y);
-      pop.querySelectorAll('.syn').forEach(btn => btn.onclick = () => {
-        ta.setRangeText(btn.textContent, a, b, 'select'); ta.focus(); grow(ta); save(); pop.hidden = true;
-      });
-    } catch (err) { showPop(`<p class="none">${esc(err.message)}</p>`, x, y); }
-  });
+      const r = await api('/api/alternatives', { method: 'POST', signal: ctl.signal, body: {
+        model: modelSel.value, preset: vc.name, context: vc.context,
+        sentence: work.source[+ta.closest('.row').dataset.i], translation: v, start: a, end: b } });
+      alts.innerHTML = r.alternatives.length ? chips(r.alternatives) : '<p class="none">none ·</p>';
+    } catch (err) { if (err.name !== 'AbortError') alts.innerHTML = `<p class="none">${esc(err.message)}</p>`; }
+  }
 
   // ---------- dialogs ----------
   const newDlg = $('#new-dialog'), voicesDlg = $('#voices-dialog'), voicesForm = $('#voices-form');

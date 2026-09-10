@@ -31,6 +31,9 @@ class FakeOllama(BaseHTTPRequestHandler):
                 "corrected": text.replace("teh", "the"),
                 "notes": ["spelling"] if "teh" in text else [],
             }
+        elif "one span" in system:
+            term = user.rsplit("[[", 1)[1].split("]]")[0]
+            out = {"alternatives": [f"other {term}", term, f"bold {term}"]}
         else:
             sent = user.rsplit("<<< ", 1)[1].split(" >>>")[0]
             k = user.rsplit("Voice ", 1)[1][0]
@@ -202,7 +205,7 @@ def test_e2e(page, server_url):
     assert page.locator(".row").nth(1).locator("textarea.tr").input_value() == ""
 
     if HAVE_DATA:
-        # dictionary popover on a Russian word; thesaurus on a selected English word
+        # dictionary popover on a Russian word; alternatives + Moby on an English word
         page.locator(".row").nth(0).locator(".w", has_text="окна").click()
         page.wait_for_selector("#pop h4")
         assert page.locator("#pop h4").inner_text() == "окно"
@@ -212,5 +215,13 @@ def test_e2e(page, server_url):
         ta2.evaluate("t => { t.focus(); t.setSelectionRange(4, 10); }")
         ta2.dispatch_event("mouseup")
         page.wait_for_selector("#pop .syn")
-        page.locator("#pop .syn", has_text="casement").first.click()
+        page.locator("#pop .moby .syn", has_text="casement").first.click()
         assert ta2.input_value() == "the casement."
+        # caret inside a word (no selection) also triggers; llm alternatives are clickable
+        ta2.evaluate("t => { t.focus(); t.setSelectionRange(6, 6); }")
+        ta2.dispatch_event("mouseup")
+        page.wait_for_selector("#pop .alts .syn")
+        assert page.locator("#pop h4").inner_text() == "casement"
+        assert page.locator("#pop .alts .syn").count() == 2  # the original is filtered out
+        page.locator("#pop .alts .syn", has_text="bold casement").click()
+        assert ta2.input_value() == "the bold casement."

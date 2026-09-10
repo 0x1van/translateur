@@ -334,6 +334,57 @@ async def translate(req: TranslateReq) -> dict:
     }
 
 
+class AltReq(BaseModel):
+    model: str
+    preset: str = "plain"
+    context: str = ""
+    sentence: str  # the Russian block the draft renders
+    translation: str  # the English draft
+    start: int
+    end: int  # span of the term inside `translation`
+
+
+ALT_SCHEMA = {
+    "type": "object",
+    "properties": {"alternatives": {"type": "array", "items": {"type": "string"}}},
+    "required": ["alternatives"],
+}
+
+
+@app.post("/api/alternatives")
+async def alternatives(req: AltReq) -> dict:
+    """DeepL-style: alternative renderings for one span of the draft, sampled wild."""
+    t = req.translation
+    term = t[req.start : req.end]
+    if not term.strip():
+        raise HTTPException(400, "empty span")
+    _, rejected = glossary_for(req.preset, req.sentence)
+    system = (
+        "You are a literary translator from Russian into British English.\n\n"
+        + (req.context + "\n\n" if req.context else "")
+        + "The translator is revising one span of their English draft, marked [[like this]]. "
+        "Propose 8 alternative renderings for that span only: drop-in replacements that fit the "
+        "grammar of the sentence, ranging from the plain to the bold, each different from the "
+        "original and from each other. Single words or short phrases.\n"
+        + ("Do NOT use: " + "; ".join(r["en"] for r in rejected) + "\n" if rejected else "")
+        + 'Reply with JSON only: {"alternatives": ["...", "..."]}'
+    )
+    user = (
+        f"RUSSIAN ORIGINAL:\n{req.sentence}\n\n"
+        f"ENGLISH DRAFT:\n{t[: req.start]}[[{term}]]{t[req.end :]}\n\n"
+        f"Alternatives for [[{term}]]:"
+    )
+    out = await ollama_json(req.model, system, user, ALT_SCHEMA, 1.3)
+    seen = {term.strip().lower()}
+    alts = []
+    for a in out.get("alternatives", []):
+        a = str(a).strip().strip("[]")
+        if a and a.lower() not in seen:
+            seen.add(a.lower())
+            alts.append(a)
+    return {"term": term, "alternatives": alts[:8]}
+
+
 class CheckReq(BaseModel):
     model: str
     text: str

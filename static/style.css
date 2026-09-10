@@ -125,7 +125,7 @@ textarea.tr::placeholder { color: var(--color-border); font-style: italic; }
 .thinking::after { content: " ·"; animation: blink 1s steps(2) infinite; }
 @keyframes blink { 50% { opacity: 0; } }
 
-/* ---- popover (dictionary / thesaurus) ---- */
+/* ---- popover (dictionary / alternatives) ---- */
 .pop {
   position: absolute; z-index: 10; max-width: 24rem; max-height: 22rem; overflow: auto;
   background: var(--color-bg); border: 1px solid var(--color-border); border-top: 2px solid var(--color-accent);
@@ -139,6 +139,7 @@ textarea.tr::placeholder { color: var(--color-border); font-style: italic; }
 .pop .syn { display: inline; border: 0; padding: 0 0.3rem 0 0; text-transform: none; letter-spacing: 0; font-family: var(--font-serif); font-size: 0.95rem; }
 .pop .syn:not(:last-child)::after { content: ","; color: var(--color-text-muted); }
 .pop .syn:hover { box-shadow: none; background: var(--color-accent); }
+.pop section { margin-top: var(--space-xs); }
 .pop .none { color: var(--color-text-muted); font-style: italic; }
 
 /* ---- dialogs ---- */
