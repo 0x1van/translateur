@@ -167,11 +167,11 @@
         w.inflight = blocks;
         await api('/api/works/' + w.slug, { method: 'PATCH', keepalive: unloading, body: { blocks, seq } });
         for (const i in blocks) w.saved[i] = blocks[i];
-        w.inflight = null;
       }
       if (flush === mine) { flush = null; clearTimeout(saveTimer); setStatus('saved ·'); }  // else newer edits are queued
       return true;
     } catch (e) { setStatus(e.message + ' · unsaved', true); return false; }  // flush stays armed: retried on the next save or switch
+    finally { w.inflight = null; }  // on failure too, or the retry would think those blocks were saved
   }
   addEventListener('pagehide', () => flush?.(true));
   grid.addEventListener('input', e => { if (e.target.matches('textarea.tr')) { pop.hidden = true; grow(e.target); save(); } });
@@ -282,7 +282,8 @@
     let at = +btn.dataset.start;
     // one side of the original context must still match (the other may hold an already-applied
     // hunk); an empty side vouches for nothing
-    const fits = p => (pre && v.slice(p - pre.length, p) === pre) || (post && v.slice(p + q.length, p + q.length + post.length) === post);
+    const fits = p => !pre && !post ? v === q  // the hunk is the whole paragraph: it applies iff nothing changed
+      : (pre && v.slice(p - pre.length, p) === pre) || (post && v.slice(p + q.length, p + q.length + post.length) === post);
     if (v.slice(at, at + q.length) !== q || !fits(at)) {  // text moved since the check
       let best = -1;
       for (let p = v.indexOf(q); p >= 0; p = v.indexOf(q, p + 1)) if (fits(p) && (best < 0 || Math.abs(p - at) < Math.abs(best - at))) best = p;
