@@ -574,7 +574,8 @@ async def translate(req: TranslateReq) -> dict:
         ask = user + (
             f"\nVoice {k} — render it in voice {k}: {voices[k]}\n"
             "Output the translation of that one sentence only — the same number of sentences as "
-            "the source, no continuation, no commentary, no added clauses."
+            "the source, no continuation, no commentary, no added clauses. English only: "
+            "transliterate names (Konstantin Makarych), never leave Russian words in."
         )
         temp = req.freedom.get(k, DEFAULT_FREEDOM[k])
         cap = 80 + len(req.sentence)  # ≈ 3× the sentence's own tokens
