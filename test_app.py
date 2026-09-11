@@ -211,7 +211,9 @@ def test_hunks():
         {"start": 13, "quote": "year", "fix": "years"},
     ]
     assert core(appmod.hunks("a b", "a b")) == []
-    assert core(appmod.hunks("the end", "the very end")) == [{"start": 3, "quote": " ", "fix": " very "}]
+    assert core(appmod.hunks("the end", "the very end")) == [
+        {"start": 3, "quote": " ", "fix": " very "}
+    ]
     assert core(appmod.hunks("end", "the end")) == [{"start": 0, "quote": "end", "fix": "the end"}]
 
 
@@ -441,13 +443,20 @@ def test_e2e(page, server_url):
     _edit(page, 2).fill("the end.")
     page.keyboard.press("Escape")
 
-    # reload → persisted, paragraph-aligned
+    # reload → persisted, paragraph-aligned; and saves made after a reload still land on disk
     page.wait_for_function("document.querySelector('#status').textContent.startsWith('saved')")
     page.goto(server_url + "/demo-work")  # the work is the path
     page.wait_for_selector(".row")
     assert page.locator("#works .work-item.active").get_attribute("href") == "/demo-work"
     assert page.locator(".row").nth(2).locator("textarea.tr").input_value() == "the end."
     assert page.locator(".row").nth(1).locator("textarea.tr").input_value() == ""
+    _edit(page, 1).fill("after reload")
+    page.keyboard.press("Escape")
+    page.wait_for_function("document.querySelector('#status').textContent.startsWith('saved')")
+    assert (WORKS / "demo-work" / "translation.md").read_text().split("\n\n")[1] == "after reload"
+    _edit(page, 1).fill("")
+    page.keyboard.press("Escape")
+    page.wait_for_function("document.querySelector('#status').textContent.startsWith('saved')")
 
     if HAVE_DATA:
         # russian pane: click a word → dictionary + ru near-synonyms; click a translation to insert

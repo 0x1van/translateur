@@ -157,7 +157,8 @@
     const blocks = Object.fromEntries(w.translation.map((t, i) => [i, t]).filter(([i, t]) => t !== w.saved[i]));
     try {
       if (Object.keys(blocks).length) {
-        await api('/api/works/' + w.slug, { method: 'PATCH', keepalive: unloading, body: { blocks, seq: ++seq } });
+        seq = Math.max(seq + 1, Date.now());  // monotonic within this page and across reloads
+        await api('/api/works/' + w.slug, { method: 'PATCH', keepalive: unloading, body: { blocks, seq } });
         for (const i in blocks) w.saved[i] = blocks[i];
       }
       if (flush === mine) { flush = null; clearTimeout(saveTimer); setStatus('saved ·'); }  // else newer edits are queued
