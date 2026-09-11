@@ -417,7 +417,7 @@ def s_pop_ru(pg):
 def s_pop_en(pg):
     pg.goto(BASE + "/qa-new")
     pg.wait_for_selector(".row")
-    w = row(pg, 0).locator("p.en .w", has_text="Second")
+    w = row(pg, 0).locator("p.en .w", has_text="Second").first
     assert w.evaluate("e => getComputedStyle(e).cursor") == "help"
     w.click()
     pg.wait_for_selector("#pop h4")
