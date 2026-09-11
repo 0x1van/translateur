@@ -127,7 +127,8 @@ textarea.tr::placeholder { color: var(--color-border); font-style: italic; }
   font-family: var(--font-serif); font-size: 1rem; line-height: 1.6; border: 0; padding: 0.3rem 0; margin: 0;
   border-bottom: 1px dotted var(--color-border);
 }
-.variant:hover { box-shadow: none; background: var(--color-accent); }
+.variant:hover:not(:disabled) { box-shadow: none; background: var(--color-accent); }
+.variant:disabled { cursor: default; }
 .variant b { font-family: var(--font-mono); font-size: 0.65rem; margin-right: 0.5rem; color: var(--color-text); }
 .variant .none { color: var(--color-text-muted); font-size: 0.9rem; }
 .variant small { font-family: var(--font-mono); font-size: 0.6rem; color: var(--color-text-muted); margin-right: 0.5rem; }

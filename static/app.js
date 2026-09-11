@@ -135,7 +135,7 @@
   // ---------- save ----------
   /* Only the blocks that changed since the last successful save are sent, so a save is small
      enough for keepalive on unload (browsers cap those bodies at ~64 KB). */
-  let saveTimer, flush = null;
+  let saveTimer, flush = null, inflight = null;
   function save() {
     clearTimeout(saveTimer);
     setStatus('saving…');
@@ -144,14 +144,17 @@
     grid.querySelectorAll('.cell.tr:not(.editing)').forEach(view);
     const attempt = async (unloading = false) => {
       clearTimeout(saveTimer);
+      await inflight;  // an earlier PATCH may still be landing: diff against what it saved, not before
       const blocks = Object.fromEntries(w.translation.map((t, i) => [i, t]).filter(([i, t]) => t !== w.saved[i]));
       const done = () => { if (flush === attempt) flush = null; };  // typing meanwhile installed a newer one: leave it
       if (!Object.keys(blocks).length) { done(); setStatus('saved ·'); return true; }
       try {
-        await api('/api/works/' + w.slug, { method: 'PATCH', keepalive: unloading, body: { blocks } });
+        inflight = api('/api/works/' + w.slug, { method: 'PATCH', keepalive: unloading, body: { blocks } });
+        await inflight;
         for (const i in blocks) w.saved[i] = blocks[i];
         done(); if (flush === null) setStatus('saved ·'); return true;
       } catch (e) { setStatus(e.message + ' · unsaved', true); return false; }  // stays armed: retried on the next save or switch
+      finally { inflight = null; }
     };
     flush = attempt;
     saveTimer = setTimeout(() => flush?.(), 700);
@@ -216,7 +219,7 @@
         (out.glossary.length || out.rejected.length ? `<p class="glossary">${
           out.glossary.map(g => `${esc(g.ru)} → ${esc(g.en)}`).join(' · ')}${
           out.rejected.map(r => ` · not “${esc(r.en)}”`).join('')}</p>` : '');
-      box.querySelectorAll('.variant').forEach(b => b.onclick = () => insert(row, out[b.dataset.k]));
+      box.querySelectorAll('.variant').forEach(b => { if (out[b.dataset.k]) b.onclick = () => insert(row, out[b.dataset.k]); else b.disabled = true; });
     } catch (e) { if (e.name !== 'AbortError') $('.thinking', box).outerHTML = `<p class="clean">${esc(e.message)}</p>`; }
   }
 

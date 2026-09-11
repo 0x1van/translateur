@@ -47,6 +47,9 @@ class FakeOllama(BaseHTTPRequestHandler):
             ):  # a hot sample cut mid-loop
                 self._send({"message": {"content": '{"text": "Life passed passed passed pas'}})
                 return
+            if k == "C" and "Конец" in sent:  # a voice that never yields usable JSON
+                self._send({"message": {"content": "nope"}})
+                return
             if body["options"]["temperature"] > 1.2:  # a hot model echoing the source
                 out = {"text": sent}
             else:
@@ -463,4 +466,9 @@ def test_e2e(page, server_url):
         page.locator(".row").nth(2).locator(".n").first.click()
         page.wait_for_selector(".row:nth-child(3) .variant")
         page.locator(".row").nth(2).locator(".variant[data-k=A]").click()
+        assert ta2.input_value() == "the bold casement. A of Конец."
+        # a voice with no usable output is shown as such and cannot insert (or delete) anything
+        c = page.locator(".row").nth(2).locator(".variant[data-k=C]")
+        assert "no usable output" in c.inner_text() and c.is_disabled()
+        c.click(force=True)
         assert ta2.input_value() == "the bold casement. A of Конец."
