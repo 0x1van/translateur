@@ -431,7 +431,7 @@ def s_pop_en(pg):
     assert pg.locator("#pop h4").inner_text() == "Second"
     assert pg.locator("#pop .alts .thinking").is_visible()
     # click another word quickly → previous request aborted, popover for the new word
-    row(pg, 0).locator("p.en .w", has_text=re.compile(r"^phrase$")).click()
+    row(pg, 0).locator("p.en .w", has_text=re.compile(r"^phrase$")).first.click()
     assert pg.locator("#pop h4").inner_text() == "phrase"
     pg.wait_for_selector("#pop .alts .syn", timeout=120000)
     assert pg.locator("#pop .moby .syn").count() > 3
