@@ -8,7 +8,7 @@ bilingual post pair.
 cd tools/translator
 uv sync --all-groups
 uv run python fetch_data.py        # once: WikDict ru-en + en-ru (38 MB), Moby (25 MB), Open English WordNet (13 MB → 124 MB db)
-uv run uvicorn app:app --reload    # http://127.0.0.1:8000
+uv run uvicorn app:app --reload --port 8765   # http://127.0.0.1:8765 (8000 is the website)
 ```
 
 - **new** — paste Russian markdown; blank lines separate paragraphs.
