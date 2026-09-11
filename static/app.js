@@ -71,11 +71,14 @@
   worksList.addEventListener('click', e => { const a = e.target.closest('.work-item'); if (a && !e.metaKey && !e.ctrlKey) { e.preventDefault(); openWork(a.dataset.slug); } });
 
   // ---------- render ----------
+  let loading = 0;
   async function openWork(slug) {
     if (work?.slug === slug) return;  // already open; reloading would show a stale snapshot over live edits
+    const mine = ++loading;
     while (flush) if (!(await flush())) return;  // pending edits belong to the work we are leaving; stay if they will not save
     const next = await api('/api/works/' + slug);
     while (flush) if (!(await flush())) return;  // …including anything typed while it loaded
+    if (mine !== loading || work?.slug === slug) return;  // a later open (or a double click) superseded this one
     work = next;
     work.saved = [...work.translation];  // what the server has, per block
     localStorage.setItem('work', slug);
@@ -154,12 +157,17 @@
   }
   async function put(w, unloading) {
     const mine = flush;
-    const blocks = Object.fromEntries(w.translation.map((t, i) => [i, t]).filter(([i, t]) => t !== w.saved[i]));
+    // diff against what the server will hold once any in-flight PATCH lands, so an unload save
+    // also re-sends a block that was reverted while that PATCH was flying (its seq wins)
+    const base = { ...w.saved, ...(w.inflight || {}) };
+    const blocks = Object.fromEntries(w.translation.map((t, i) => [i, t]).filter(([i, t]) => t !== base[i]));
     try {
       if (Object.keys(blocks).length) {
         seq = Math.max(seq + 1, Date.now());  // monotonic within this page and across reloads
+        w.inflight = blocks;
         await api('/api/works/' + w.slug, { method: 'PATCH', keepalive: unloading, body: { blocks, seq } });
         for (const i in blocks) w.saved[i] = blocks[i];
+        w.inflight = null;
       }
       if (flush === mine) { flush = null; clearTimeout(saveTimer); setStatus('saved ·'); }  // else newer edits are queued
       return true;
@@ -272,8 +280,9 @@
     const row = btn.closest('.row'), ta = $('textarea.tr', row), q = btn.dataset.q, f = btn.dataset.f, v = ta.value;
     const { pre, post } = btn.dataset;
     let at = +btn.dataset.start;
-    // one side of the original context must still match (the other may hold an already-applied hunk)
-    const fits = p => v.slice(p - pre.length, p) === pre || v.slice(p + q.length, p + q.length + post.length) === post;
+    // one side of the original context must still match (the other may hold an already-applied
+    // hunk); an empty side vouches for nothing
+    const fits = p => (pre && v.slice(p - pre.length, p) === pre) || (post && v.slice(p + q.length, p + q.length + post.length) === post);
     if (v.slice(at, at + q.length) !== q || !fits(at)) {  // text moved since the check
       let best = -1;
       for (let p = v.indexOf(q); p >= 0; p = v.indexOf(q, p + 1)) if (fits(p) && (best < 0 || Math.abs(p - at) < Math.abs(best - at))) best = p;

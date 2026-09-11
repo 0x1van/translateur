@@ -28,7 +28,7 @@ class FakeOllama(BaseHTTPRequestHandler):
         user = body["messages"][1]["content"]
         if "copy editor" in system:
             text = user.split("TO CHECK:\n")[1]
-            fixed = text.replace("teh", "the").replace("He were", "He was")
+            fixed = text.replace("teh", "the").replace("He were", "He was").replace("Its late", "It's late")
             out = {"corrected": fixed, "notes": ["fix"] if fixed != text else []}
         elif "one span" in system:
             term = user.rsplit("[[", 1)[1].split("]]")[0]
@@ -402,6 +402,17 @@ def test_e2e(page, server_url):
     en2.click()
     ta2.fill("teh end.")
     page.keyboard.press("Escape")
+    # a hunk at the very start (empty left context) must not drift to a later occurrence either
+    en2.click()
+    ta2.fill("Its late. Its fur is wet.")
+    page.keyboard.press("Escape")
+    page.locator(".row").nth(2).locator(".check").click()
+    page.wait_for_selector(".issue")
+    en2.click()
+    ta2.fill("It's late. Its fur is wet.")
+    page.keyboard.press("Escape")
+    page.locator(".row").nth(2).locator(".issue").click()
+    assert ta2.input_value() == "It's late. Its fur is wet."
     # a hunk whose words were already fixed by hand must not land on another occurrence
     en2.click()
     ta2.fill("He were late. They were early.")
