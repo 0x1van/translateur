@@ -113,6 +113,7 @@ class SaveWork(BaseModel):
 
 class PatchWork(BaseModel):
     blocks: dict[int, str]  # index → new text; the client sends only what changed
+    seq: int = 0  # client-side counter; an older patch arriving late must not undo a newer one
 
 
 @app.get("/api/works")
@@ -153,6 +154,7 @@ def _clean_block(b: str) -> str:
 
 
 _WRITE_LOCK = threading.Lock()  # ponytail: one process, one lock; per-work locks if it ever matters
+_SEQ: dict[tuple[str, int], int] = {}  # (slug, block) → newest seq applied, for this process's life
 
 
 def _atomic_write(path: Path, text: str) -> None:
@@ -186,6 +188,10 @@ def patch_work(slug: str, body: PatchWork) -> dict:
         for i, text in body.blocks.items():
             if not 0 <= i < len(blocks):
                 raise HTTPException(400, f"block {i} out of range")
+            if body.seq and body.seq < _SEQ.get((slug, i), 0):
+                continue  # a newer patch for this block already landed (unload vs. in-flight save)
+            if body.seq:
+                _SEQ[(slug, i)] = body.seq
             blocks[i] = _clean_block(text)
         _write_translation(work_dir(slug), blocks)
     return {"ok": True}
@@ -493,7 +499,18 @@ def hunks(original: str, corrected: str) -> list[dict]:
                 i1, j1 = i1 - 1, j1 - 1
             else:
                 i2, j2 = i2 + 1, j2 + 1
-        out.append({"start": pos[i1], "quote": "".join(a[i1:i2]), "fix": "".join(b[j1:j2])})
+        start, quote = pos[i1], "".join(a[i1:i2])
+        out.append(
+            {
+                "start": start,
+                "quote": quote,
+                "fix": "".join(b[j1:j2]),
+                # a little context so the client can refuse to apply the hunk to a different
+                # occurrence of the same words after the text has been edited
+                "pre": original[max(0, start - 12) : start],
+                "post": original[start + len(quote) : start + len(quote) + 12],
+            }
+        )
     return out
 
 

@@ -28,10 +28,8 @@ class FakeOllama(BaseHTTPRequestHandler):
         user = body["messages"][1]["content"]
         if "copy editor" in system:
             text = user.split("TO CHECK:\n")[1]
-            out = {
-                "corrected": text.replace("teh", "the"),
-                "notes": ["spelling"] if "teh" in text else [],
-            }
+            fixed = text.replace("teh", "the").replace("He were", "He was")
+            out = {"corrected": fixed, "notes": ["fix"] if fixed != text else []}
         elif "one span" in system:
             term = user.rsplit("[[", 1)[1].split("]]")[0]
             out = {"alternatives": [f"other {term}", term, f"bold {term}"]}
@@ -158,6 +156,10 @@ def test_patch_blocks():
     assert appmod.load_work("patchy")["translation"] == ["one", "two\nlines", "three"]
     with pytest.raises(appmod.HTTPException):
         appmod.patch_work("patchy", appmod.PatchWork(blocks={7: "x"}))
+    # an older patch arriving after a newer one for the same block is ignored
+    appmod.patch_work("patchy", appmod.PatchWork(blocks={0: "newest"}, seq=6))
+    appmod.patch_work("patchy", appmod.PatchWork(blocks={0: "stale", 1: "fresh"}, seq=5))
+    assert appmod.load_work("patchy")["translation"][:2] == ["newest", "fresh"]
     assert not list(d.glob("*.tmp"))  # atomic write leaves no temp file behind
     # overlapping patches of different blocks both land (serialised by the lock)
     ts = [
@@ -192,14 +194,25 @@ def test_leaks_cyrillic():
     assert not appmod.leaks_cyrillic("")
 
 
+def test_hunks_context():
+    h = appmod.hunks("He were late. They were early.", "He was late. They were early.")
+    assert (
+        len(h) == 1
+        and h[0]["quote"] == "were"
+        and h[0]["pre"] == "He "
+        and h[0]["post"] == " late. They "
+    )
+
+
 def test_hunks():
-    assert appmod.hunks("He were nine year old.", "He was nine years old.") == [
+    core = lambda hs: [{k: h[k] for k in ("start", "quote", "fix")} for h in hs]
+    assert core(appmod.hunks("He were nine year old.", "He was nine years old.")) == [
         {"start": 3, "quote": "were", "fix": "was"},
         {"start": 13, "quote": "year", "fix": "years"},
     ]
-    assert appmod.hunks("a b", "a b") == []
-    assert appmod.hunks("the end", "the very end") == [{"start": 3, "quote": " ", "fix": " very "}]
-    assert appmod.hunks("end", "the end") == [{"start": 0, "quote": "end", "fix": "the end"}]
+    assert core(appmod.hunks("a b", "a b")) == []
+    assert core(appmod.hunks("the end", "the very end")) == [{"start": 3, "quote": " ", "fix": " very "}]
+    assert core(appmod.hunks("end", "the end")) == [{"start": 0, "quote": "end", "fix": "the end"}]
 
 
 def test_presets_parse_project_config():
@@ -384,6 +397,21 @@ def test_e2e(page, server_url):
     page.keyboard.press("Escape")
     page.locator(".row").nth(2).locator(".apply-all").click()
     assert ta2.input_value() == "the cat. the dog. Added later."
+    en2.click()
+    ta2.fill("teh end.")
+    page.keyboard.press("Escape")
+    # a hunk whose words were already fixed by hand must not land on another occurrence
+    en2.click()
+    ta2.fill("He were late. They were early.")
+    page.keyboard.press("Escape")
+    page.locator(".row").nth(2).locator(".check").click()
+    page.wait_for_selector(".issue")
+    en2.click()
+    ta2.fill("He was late. They were early.")  # fixed by hand meanwhile
+    page.keyboard.press("Escape")
+    page.locator(".row").nth(2).locator(".issue").click()
+    assert ta2.input_value() == "He was late. They were early."
+    assert page.locator(".row").nth(2).locator(".issue").count() == 0
     en2.click()
     ta2.fill("teh end.")
     page.keyboard.press("Escape")

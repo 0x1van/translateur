@@ -72,6 +72,7 @@
 
   // ---------- render ----------
   async function openWork(slug) {
+    if (work?.slug === slug) return;  // already open; reloading would show a stale snapshot over live edits
     while (flush) if (!(await flush())) return;  // pending edits belong to the work we are leaving; stay if they will not save
     const next = await api('/api/works/' + slug);
     while (flush) if (!(await flush())) return;  // …including anything typed while it loaded
@@ -139,15 +140,16 @@
      flush fits keepalive's ~64 KB cap. Every save runs through one promise chain: saves never
      overlap, and each diffs against what the previous one actually saved (so a revert typed while
      a PATCH was in flight still goes out). `flush` is non-null while something may be unsaved. */
-  let saveTimer, flush = null, chain = Promise.resolve();
+  let saveTimer, flush = null, chain = Promise.resolve(), seq = 0;
   function save() {
     clearTimeout(saveTimer);
     setStatus('saving…');
     const w = work;
     w.translation = [...grid.querySelectorAll('textarea.tr')].map(t => t.value);
     grid.querySelectorAll('.cell.tr:not(.editing)').forEach(view);
-    // a cancelled predecessor (navigation aborts plain fetches) must not stop the keepalive one
-    flush = (unloading = false) => (chain = chain.catch(() => {}).then(() => put(w, unloading)));
+    // unloading: no time to queue — send everything unsaved now, with keepalive; the seq lets the
+    // server ignore an older in-flight save that lands after it
+    flush = (unloading = false) => unloading ? put(w, true) : (chain = chain.then(() => put(w, false)));
     saveTimer = setTimeout(() => flush?.(), 700);
   }
   async function put(w, unloading) {
@@ -155,7 +157,7 @@
     const blocks = Object.fromEntries(w.translation.map((t, i) => [i, t]).filter(([i, t]) => t !== w.saved[i]));
     try {
       if (Object.keys(blocks).length) {
-        await api('/api/works/' + w.slug, { method: 'PATCH', keepalive: unloading, body: { blocks } });
+        await api('/api/works/' + w.slug, { method: 'PATCH', keepalive: unloading, body: { blocks, seq: ++seq } });
         for (const i in blocks) w.saved[i] = blocks[i];
       }
       if (flush === mine) { flush = null; clearTimeout(saveTimer); setStatus('saved ·'); }  // else newer edits are queued
@@ -255,7 +257,7 @@
         model: modelSel.value, text: ta.value, source: work.source[+row.dataset.i] } });
       const issues = res.issues || [], notes = res.notes || [];
       out.innerHTML = issues.length
-        ? issues.map(i => `<button type="button" class="issue" data-start="${i.start}" data-q="${esc(i.quote)}" data-f="${esc(i.fix)}"><s>${esc(i.quote)}</s> → <b>${esc(i.fix)}</b></button>`).join('')
+        ? issues.map(i => `<button type="button" class="issue" data-start="${i.start}" data-q="${esc(i.quote)}" data-f="${esc(i.fix)}" data-pre="${esc(i.pre || '')}" data-post="${esc(i.post || '')}"><s>${esc(i.quote)}</s> → <b>${esc(i.fix)}</b></button>`).join('')
           + `<p class="clean">${notes.map(esc).join(' · ')}</p><button type="button" class="apply-all">apply all</button>`
         : '<p class="clean">no issues found ·</p>';
       // apply all = each remaining hunk in turn, so edits made since the check survive
@@ -263,13 +265,17 @@
       if (all) all.onclick = () => { out.querySelectorAll('.issue').forEach(applyIssue); out.innerHTML = ''; };
     } catch (e) { out.innerHTML = `<p class="clean">${esc(e.message)}</p>`; }
   }
-  /* Apply one hunk: at its recorded offset if the text there still matches, else first occurrence. */
+  /* Apply one hunk: at its recorded offset if the text there still matches; else at the nearest
+     occurrence that still has the same surrounding text; else it no longer applies and is dropped. */
   function applyIssue(btn) {
-    const row = btn.closest('.row'), ta = $('textarea.tr', row), q = btn.dataset.q, f = btn.dataset.f;
+    const row = btn.closest('.row'), ta = $('textarea.tr', row), q = btn.dataset.q, f = btn.dataset.f, v = ta.value;
+    const { pre, post } = btn.dataset;
     let at = +btn.dataset.start;
-    if (ta.value.slice(at, at + q.length) !== q) {  // text moved since the check: nearest occurrence wins
+    // one side of the original context must still match (the other may hold an already-applied hunk)
+    const fits = p => v.slice(p - pre.length, p) === pre || v.slice(p + q.length, p + q.length + post.length) === post;
+    if (v.slice(at, at + q.length) !== q || !fits(at)) {  // text moved since the check
       let best = -1;
-      for (let p = ta.value.indexOf(q); p >= 0; p = ta.value.indexOf(q, p + 1)) if (best < 0 || Math.abs(p - at) < Math.abs(best - at)) best = p;
+      for (let p = v.indexOf(q); p >= 0; p = v.indexOf(q, p + 1)) if (fits(p) && (best < 0 || Math.abs(p - at) < Math.abs(best - at))) best = p;
       at = best;
     }
     if (at < 0) { btn.remove(); return; }
