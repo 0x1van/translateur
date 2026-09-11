@@ -662,11 +662,14 @@ def s_dark_contrast(pg):
     pg.click("#theme-btn")
 
 
+PROJECTS = Path(tempfile.mkdtemp(prefix="translator-qa-projects-"))
+
+
 def _server(port: int, env: dict) -> subprocess.Popen:
     proc = subprocess.Popen(
         [sys.executable, "-m", "uvicorn", "app:app", "--port", str(port), "--log-level", "warning"],
         cwd=HERE,
-        env={**os.environ, "WORKS_DIR": str(WORKS), **env},
+        env={**os.environ, "WORKS_DIR": str(WORKS), "PROJECTS_DIR": str(PROJECTS), **env},
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
@@ -694,6 +697,9 @@ def main():
         sys.exit(
             f"needs these works present locally: {missing} (run the PfU importer; vanka is any loose work)"
         )
+    # the real projects' translation configs, copied: the sweep writes about.md and new projects
+    for cfg in (HERE.parent.parent / "projects").glob("*/translation/config.md"):
+        shutil.copytree(cfg.parent, PROJECTS / cfg.parent.parent.name / "translation")
     p1, p2 = _free_port(), _free_port()
     BASE, NOLLAMA = f"http://127.0.0.1:{p1}", f"http://127.0.0.1:{p2}"
     servers = [_server(p1, {}), _server(p2, {"OLLAMA_URL": "http://127.0.0.1:1"})]
@@ -703,6 +709,7 @@ def main():
         for sv in servers:
             sv.terminate()
         shutil.rmtree(WORKS, ignore_errors=True)
+        shutil.rmtree(PROJECTS, ignore_errors=True)
 
 
 def _run():
