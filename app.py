@@ -573,13 +573,16 @@ async def translate(req: TranslateReq) -> dict:
 
         text = await sample(temp)
         bad = badness(text, req.sentence)
-        if (
-            bad
-        ):  # looped, echoed, half-translated or riffing: once more, calmer; keep the better one
-            again = await sample(min(temp, 0.6))
+        for t in (
+            min(temp, 0.6),
+            0.4,
+        ):  # looped, echoed, half-translated or riffing: calmer retries
+            if not bad:
+                break
+            again = await sample(t)
             bad2 = badness(again, req.sentence)
             if bad2 < bad or (bad2 == bad and len(again) < len(text)):
-                text = again
+                text, bad = again, bad2
         return k, text
 
     return dict(await asyncio.gather(*(one(k) for k in "ABC"))) | {

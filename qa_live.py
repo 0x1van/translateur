@@ -228,7 +228,7 @@ def s_edit_basic(pg):
 def s_edit_caret(pg):
     pg.goto(BASE + "/qa-new")
     pg.wait_for_selector(".row")
-    w = row(pg, 0).locator("p.en .w", has_text="Second")
+    w = row(pg, 0).locator("p.en .w", has_text=re.compile(r"^Second$"))
     b = w.bounding_box()
     # click on the space just after "paragraph." (before "Second"): non-word → edit
     pg.mouse.click(b["x"] - 2, b["y"] + b["height"] / 2)
@@ -424,14 +424,14 @@ def s_pop_en(pg):
     if "Second" not in row(pg, 0).locator("p.en").inner_text():  # self-sufficient under a filter
         enter_edit(pg, 0).fill("First paragraph. Second phrase!")
         pg.keyboard.press("Escape")
-    w = row(pg, 0).locator("p.en .w", has_text="Second").first
+    w = row(pg, 0).locator("p.en .w", has_text=re.compile(r"^Second$")).first
     assert w.evaluate("e => getComputedStyle(e).cursor") == "help"
     w.click()
     pg.wait_for_selector("#pop h4")
     assert pg.locator("#pop h4").inner_text() == "Second"
     assert pg.locator("#pop .alts .thinking").is_visible()
     # click another word quickly → previous request aborted, popover for the new word
-    row(pg, 0).locator("p.en .w", has_text="phrase").click()
+    row(pg, 0).locator("p.en .w", has_text=re.compile(r"^phrase$")).click()
     assert pg.locator("#pop h4").inner_text() == "phrase"
     pg.wait_for_selector("#pop .alts .syn", timeout=120000)
     assert pg.locator("#pop .moby .syn").count() > 3
