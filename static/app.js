@@ -72,8 +72,10 @@
 
   // ---------- render ----------
   async function openWork(slug) {
-    if (flush && !(await flush())) return;  // a pending edit belongs to the work we are leaving; stay if it will not save
-    work = await api('/api/works/' + slug);
+    while (flush) if (!(await flush())) return;  // pending edits belong to the work we are leaving; stay if they will not save
+    const next = await api('/api/works/' + slug);
+    while (flush) if (!(await flush())) return;  // …including anything typed while it loaded
+    work = next;
     work.saved = [...work.translation];  // what the server has, per block
     localStorage.setItem('work', slug);
     history.replaceState(null, '', '/' + slug);
@@ -133,31 +135,32 @@
   });
 
   // ---------- save ----------
-  /* Only the blocks that changed since the last successful save are sent, so a save is small
-     enough for keepalive on unload (browsers cap those bodies at ~64 KB). */
-  let saveTimer, flush = null, inflight = null;
+  /* Saving. Only blocks changed since the last successful save are sent (PATCH), so the unload
+     flush fits keepalive's ~64 KB cap. Every save runs through one promise chain: saves never
+     overlap, and each diffs against what the previous one actually saved (so a revert typed while
+     a PATCH was in flight still goes out). `flush` is non-null while something may be unsaved. */
+  let saveTimer, flush = null, chain = Promise.resolve();
   function save() {
     clearTimeout(saveTimer);
     setStatus('saving…');
     const w = work;
     w.translation = [...grid.querySelectorAll('textarea.tr')].map(t => t.value);
     grid.querySelectorAll('.cell.tr:not(.editing)').forEach(view);
-    const attempt = async (unloading = false) => {
-      clearTimeout(saveTimer);
-      await inflight;  // an earlier PATCH may still be landing: diff against what it saved, not before
-      const blocks = Object.fromEntries(w.translation.map((t, i) => [i, t]).filter(([i, t]) => t !== w.saved[i]));
-      const done = () => { if (flush === attempt) flush = null; };  // typing meanwhile installed a newer one: leave it
-      if (!Object.keys(blocks).length) { done(); setStatus('saved ·'); return true; }
-      try {
-        inflight = api('/api/works/' + w.slug, { method: 'PATCH', keepalive: unloading, body: { blocks } });
-        await inflight;
-        for (const i in blocks) w.saved[i] = blocks[i];
-        done(); if (flush === null) setStatus('saved ·'); return true;
-      } catch (e) { setStatus(e.message + ' · unsaved', true); return false; }  // stays armed: retried on the next save or switch
-      finally { inflight = null; }
-    };
-    flush = attempt;
+    // a cancelled predecessor (navigation aborts plain fetches) must not stop the keepalive one
+    flush = (unloading = false) => (chain = chain.catch(() => {}).then(() => put(w, unloading)));
     saveTimer = setTimeout(() => flush?.(), 700);
+  }
+  async function put(w, unloading) {
+    const mine = flush;
+    const blocks = Object.fromEntries(w.translation.map((t, i) => [i, t]).filter(([i, t]) => t !== w.saved[i]));
+    try {
+      if (Object.keys(blocks).length) {
+        await api('/api/works/' + w.slug, { method: 'PATCH', keepalive: unloading, body: { blocks } });
+        for (const i in blocks) w.saved[i] = blocks[i];
+      }
+      if (flush === mine) { flush = null; clearTimeout(saveTimer); setStatus('saved ·'); }  // else newer edits are queued
+      return true;
+    } catch (e) { setStatus(e.message + ' · unsaved', true); return false; }  // flush stays armed: retried on the next save or switch
   }
   addEventListener('pagehide', () => flush?.(true));
   grid.addEventListener('input', e => { if (e.target.matches('textarea.tr')) { pop.hidden = true; grow(e.target); save(); } });
