@@ -417,6 +417,9 @@ def s_pop_ru(pg):
 def s_pop_en(pg):
     pg.goto(BASE + "/qa-new")
     pg.wait_for_selector(".row")
+    if "Second" not in row(pg, 0).locator("p.en").inner_text():  # self-sufficient under a filter
+        enter_edit(pg, 0).fill("First paragraph. Second phrase!")
+        pg.keyboard.press("Escape")
     w = row(pg, 0).locator("p.en .w", has_text="Second").first
     assert w.evaluate("e => getComputedStyle(e).cursor") == "help"
     w.click()
