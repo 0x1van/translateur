@@ -11,7 +11,9 @@ uv run python fetch_data.py        # once: WikDict ru-en + en-ru (38 MB), Moby (
 uv run uvicorn app:app --reload --port 8765   # http://127.0.0.1:8765 (8000 is the website)
 ```
 
-- **new** — paste Russian markdown; blank lines separate paragraphs.
+- **new** — slug, project, optional title; then paste the Russian into the left pane. Blank
+  lines separate paragraphs. The Russian stays editable: click past the words, retype or paste,
+  click away; a paragraph split keeps its English with the first part.
 - **superscript number** on a sentence — three variants (A/B/C) from the model; click one to
   insert at the cursor / replace the selection / append. Type freely in the right pane; it
   autosaves to `works/<slug>/translation.md`.

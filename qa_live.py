@@ -83,7 +83,10 @@ def s_boot_empty(pg):
     pg.goto(BASE + "/")
     pg.wait_for_selector("#works .work-item")
     assert pg.locator(".empty").is_visible()
-    assert pg.locator("#works details.proj summary .t").inner_text() == "posts-from-underground"
+    assert (
+        pg.locator("#works details.proj summary .t").all_inner_texts()
+        == pg.locator("#preset option").all_inner_texts()
+    )
     assert pg.locator("#works .work-item").count() == 4
     assert pg.locator("#preset option").count() >= 3
     assert pg.input_value("#model")
@@ -136,9 +139,7 @@ def s_tree_switch(pg):
     )
     assert pg.evaluate("window.__marker") == 1, "page reloaded"
     assert pg.url == BASE + "/vanka"
-    assert pg.input_value("#preset") == "posts-from-underground", (
-        "loose work keeps the current preset"
-    )
+    assert pg.input_value("#preset") == "plain", "a loose work belongs to plain"
 
 
 @scenario("new work: duplicate slug → error in status, dialog stays; cancel closes")
@@ -148,7 +149,6 @@ def s_new_dup(pg):
     pg.click("#new-btn")
     assert pg.locator("#new-dialog").evaluate("d => d.open")
     pg.fill("input[name=slug]", "vanka")
-    pg.fill("textarea[name=source]", "Текст.")
     pg.click("#new-form button[value=ok]")
     pg.wait_for_function("document.querySelector('#status').classList.contains('err')")
     assert "exists" in pg.locator("#status").text_content()
@@ -157,22 +157,15 @@ def s_new_dup(pg):
     assert not pg.locator("#new-dialog").evaluate("d => d.open")
 
 
-@scenario("new work: invalid slug blocked by the form; whitespace-only source rejected")
+@scenario("new work: invalid slug blocked by the form")
 def s_new_invalid(pg):
     pg.goto(BASE + "/")
     pg.wait_for_selector("#new-btn")
     pg.click("#new-btn")
     pg.fill("input[name=slug]", "Bad Slug")
-    pg.fill("textarea[name=source]", "Текст.")
     pg.click("#new-form button[value=ok]")
     assert pg.locator("#new-dialog").evaluate("d => d.open")
     assert not pg.evaluate("document.querySelector('input[name=slug]').validity.valid")
-    r = pg.request.post(
-        BASE + "/api/works",
-        data=json.dumps({"slug": "blank-src", "source": "  \n\n "}),
-        headers={"Content-Type": "application/json"},
-    )
-    assert r.status == 400, r.status
     pg.click("#new-dialog .cancel")
 
 
@@ -184,20 +177,24 @@ def s_new_create(pg):
     pg.fill("input[name=slug]", "qa-new")
     pg.select_option("#new-form select[name=project]", "chekhov-translation")
     pg.fill("input[name=title]", "Крыжовник · ё")
-    pg.locator("textarea[name=source]").evaluate(
-        "t => t.value = 'Первый абзац. Вторая фраза!\\r\\n\\r\\n\\r\\n\\r\\n— Диалог? — спросил он.\\r\\n\\r\\nТретий.'"
-    )
     pg.click("#new-form button[value=ok]")
     pg.wait_for_function("location.pathname === '/qa-new'")
     pg.wait_for_selector(".row")
+    # the Russian is pasted into the left pane; windows newlines and extra blank lines normalise
+    pg.locator("p.ru").click()
+    pg.locator("textarea.src").evaluate(
+        "t => t.value = 'Первый абзац. Вторая фраза!\\r\\n\\r\\n\\r\\n\\r\\n— Диалог? — спросил он.\\r\\n\\r\\nТретий.'"
+    )
+    pg.keyboard.press("Escape")
+    pg.wait_for_function("document.querySelectorAll('.row').length === 3")
     assert pg.locator(".row").count() == 3, pg.locator(".row").count()
     assert pg.locator(".cell.src .n").count() == 4  # 2 + 1 + 1 sentences
     assert pg.input_value("#preset") == "chekhov-translation"
     assert pg.locator("#works .work-item.active .t").inner_text() == "Крыжовник · ё"
-    assert pg.locator("#works details.proj summary .t").all_inner_texts() == [
-        "chekhov-translation",
-        "posts-from-underground",
-    ]
+    assert (
+        pg.locator("#works details.proj summary .t").all_inner_texts()
+        == pg.locator("#preset option").all_inner_texts()
+    )
     src = (WORKS / "qa-new" / "source.md").read_text()
     assert src.startswith("---\nproject: chekhov-translation\ntitle:"), src[:80]
     assert "\r" not in src and "\n\n\n" not in src

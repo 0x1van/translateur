@@ -112,7 +112,8 @@ class SaveWork(BaseModel):
 
 
 class PatchWork(BaseModel):
-    blocks: dict[int, str]  # index → new text; the client sends only what changed
+    blocks: dict[int, str] = {}  # translation: index → new text; the client sends only what changed
+    source: dict[int, str] = {}  # Russian: index → new text; blank lines split it into paragraphs
     seq: int = 0  # client-side counter; an older patch arriving late must not undo a newer one
 
 
@@ -140,14 +141,11 @@ def create_work(body: NewWork) -> dict:
     d = work_dir(body.slug)
     if d.exists():
         raise HTTPException(409, "work exists")
-    src = normalise_source(body.source)
-    if not src:
-        raise HTTPException(400, "source is empty")
+    src = normalise_source(body.source)  # may be empty: the Russian is pasted into the pane
     d.mkdir(parents=True)
     meta = {k: v for k, v in (("project", body.project), ("title", body.title)) if v}
-    fm = "---\n" + yaml.safe_dump(meta, allow_unicode=True) + "---\n\n" if meta else ""
-    _atomic_write(d / "source.md", fm + src + "\n")
     with _WRITE_LOCK:
+        _write_source(d, meta, split_blocks(src))
         _write_translation(d, [""] * len(split_blocks(src)))
     return load_work(body.slug)
 
@@ -171,6 +169,11 @@ def _atomic_write(path: Path, text: str) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(text)
     os.replace(tmp, path)
+
+
+def _write_source(d: Path, meta: dict, blocks: list[str]) -> None:
+    fm = "---\n" + yaml.safe_dump(meta, allow_unicode=True) + "---\n\n" if meta else ""
+    _atomic_write(d / "source.md", fm + "\n\n".join(blocks) + "\n")
 
 
 def _write_translation(d: Path, blocks: list[str]) -> None:
@@ -224,8 +227,20 @@ def patch_work(slug: str, body: PatchWork) -> dict:
             if body.seq:
                 _SEQ[(slug, i)] = body.seq
             blocks[i] = _clean_block(text)
+        if body.source:
+            # a Russian paragraph re-typed or pasted over: blank lines split it into several
+            # paragraphs; its translation stays with the first, the new ones start empty
+            src = list(w["source"])
+            meta = {k: w[k] for k in ("project", "title") if w[k]}
+            for i in sorted(body.source, reverse=True):
+                if not 0 <= i < len(src):
+                    raise HTTPException(400, f"paragraph {i} out of range")
+                parts = split_blocks(normalise_source(body.source[i])) or [""]
+                src[i : i + 1] = parts
+                blocks[i : i + 1] = [blocks[i]] + [""] * (len(parts) - 1)
+            _write_source(work_dir(slug), meta, src)
         _write_translation(work_dir(slug), blocks)
-    return {"ok": True}
+    return load_work(slug) if body.source else {"ok": True}
 
 
 # ---------- presets (voices from projects/*/translation/config.md) ----------

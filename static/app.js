@@ -68,26 +68,31 @@
   const prog = (done, total) => `<span class="prog" title="${done} of ${total} paragraphs have English"><i style="--p:${total ? done / total * 100 : 0}%"></i>${done}/${total}</span>`;
   function fillProjectSelect() {
     presetSel.innerHTML = presets.map(p => `<option>${esc(p.name)}</option>`).join('');
-    $('#new-form select[name=project]').innerHTML = '<option value="">none</option>'
-      + presets.slice(1).map(p => `<option>${esc(p.name)}</option>`).join('') + '<option value="__new">new project…</option>';
+    $('#new-form select[name=project]').innerHTML = presets.map(p => `<option>${esc(p.name)}</option>`).join('') + '<option value="__new">new project…</option>';
   }
   async function refreshWorks() {
     const works = await api('/api/works'), groups = {}, open = openGroups();
-    works.forEach(w => (groups[w.project] ||= []).push(w));  // sorted by project, then slug
-    const item = w => `<li><a class="work-item" href="/${esc(w.slug)}" data-slug="${esc(w.slug)}" title="${esc(w.slug)}"><span class="t">${esc(w.title || w.slug)}</span>${prog(w.done, w.total)}</a></li>`;
+    presets.forEach(p => (groups[p.name] = []));  // the same projects, in the same order, as the dropdown
+    works.forEach(w => (groups[w.project || 'plain'] ||= []).push(w));  // loose works sit under "plain"
+    const item = w => `<li><a class="work-item${w.slug === work?.slug ? ' active' : ''}" href="/${esc(w.slug)}" data-slug="${esc(w.slug)}" title="${esc(w.slug)}"><span class="t">${esc(w.title || w.slug)}</span>${prog(w.done, w.total)}</a></li>`;
     worksList.innerHTML = Object.entries(groups).map(([p, ws]) => {
-      if (!p) return ws.map(item).join('');
       const done = ws.reduce((n, w) => n + w.done, 0), total = ws.reduce((n, w) => n + w.total, 0);
-      return `<li><details class="proj" data-project="${esc(p)}"${open.has(p) || p === work?.project ? ' open' : ''}>
-        <summary><span class="t">${esc(p)}</span>${prog(done, total)}</summary><ul>${ws.map(item).join('')}</ul></details></li>`;
-    }).join('') || '<li class="clean">none yet ·</li>';
+      return `<li><details class="proj" data-project="${esc(p)}"${open.has(p) || p === (work?.project || 'plain') ? ' open' : ''}>
+        <summary><span class="t">${esc(p)}</span>${ws.length ? prog(done, total) : ''}<button type="button" class="add" title="new work in ${esc(p)}">+</button></summary>
+        <ul>${ws.map(item).join('') || '<li class="clean">nothing yet ·</li>'}</ul></details></li>`;
+    }).join('');
   }
   worksList.addEventListener('toggle', e => {
     const d = e.target; if (!d.matches?.('details.proj')) return;
     const open = openGroups(); d.open ? open.add(d.dataset.project) : open.delete(d.dataset.project);
     localStorage.setItem('tree:open', JSON.stringify([...open]));
   }, true);
-  worksList.addEventListener('click', e => { const a = e.target.closest('.work-item'); if (a && !e.metaKey && !e.ctrlKey) { e.preventDefault(); openWork(a.dataset.slug); } });
+  worksList.addEventListener('click', e => {
+    const add = e.target.closest('summary .add');
+    if (add) { e.preventDefault(); return newWork(add.closest('details').dataset.project); }
+    const a = e.target.closest('.work-item');
+    if (a && !e.metaKey && !e.ctrlKey) { e.preventDefault(); openWork(a.dataset.slug); }
+  });
   /* Progress of the open work, kept current from what is on screen (no round trip). */
   function markProgress() {
     if (!work) return;
@@ -117,19 +122,21 @@
     localStorage.setItem('work', slug);
     history.replaceState(null, '', '/' + slug);
     worksList.querySelectorAll('.work-item').forEach(b => b.classList.toggle('active', b.dataset.slug === slug));
+    presetSel.value = work.project || 'plain';  // the work's project is the current project
     const group = worksList.querySelector(`.work-item[data-slug="${CSS.escape(slug)}"]`)?.closest('details.proj');
     if (group) group.open = true;
-    if (presets.some(p => p.name === work.project)) presetSel.value = work.project;  // the work's project wins
     let n = 0;
     grid.innerHTML = work.source.map((block, i) => `
       <div class="row" id="p${i}" data-i="${i}" data-n0="${n + 1}">
-        <div class="cell src" lang="ru"><p>${work.sentences[i].map((s, j) =>
-          `<span class="sent" data-j="${j}"><sup class="n" title="translate this sentence" role="button" tabindex="0">${++n}</sup>${tok(s, 0)}</span>`).join(' ')}</p></div>
+        <div class="cell src" lang="ru"><p class="ru" title="click a word to look it up · click elsewhere to edit">${work.sentences[i].length ? work.sentences[i].map((s, j) =>
+          `<span class="sent" data-j="${j}"><sup class="n" title="translate this sentence" role="button" tabindex="0">${++n}</sup>${tok(s, 0)}</span>`).join(' ')
+          : '<span class="ph">paste the Russian here…</span>'}</p><textarea class="src" lang="ru" spellcheck="false" placeholder="…"></textarea></div>
         <div class="cell tr"><p class="en" lang="en-GB" title="click a word to look it up · click elsewhere to edit"></p><textarea class="tr" lang="en-GB" spellcheck="true" placeholder="…"></textarea>
           <div class="variants" hidden></div>
           <div class="tools"><button type="button" class="check">check grammar</button></div><div class="issues"></div></div>
       </div>`).join('');
     grid.querySelectorAll('.cell.tr').forEach((cell, i) => { $('textarea.tr', cell).value = work.translation[i]; view(cell); });
+    grid.querySelectorAll('textarea.src').forEach((ta, i) => { ta.value = work.source[i]; });
     if (!status.classList.contains('err')) setStatus('');
   }
   const grow = ta => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; };
@@ -173,6 +180,27 @@
     c.classList.remove('editing'); view(c);
   });
 
+  /* The Russian is editable too: click past the words, type or paste, click away (or Escape).
+     A blank line splits the paragraph; the translation stays with the first part. */
+  function editSource(cell) {
+    const ta = $('textarea.src', cell);
+    cell.classList.add('editing'); pop.hidden = true; grow(ta);
+    ta.setSelectionRange(ta.value.length, ta.value.length); ta.focus();
+  }
+  grid.addEventListener('focusout', async e => {
+    if (!e.target.matches('textarea.src')) return;
+    const ta = e.target, cell = ta.closest('.cell.src'), i = +cell.closest('.row').dataset.i;
+    cell.classList.remove('editing');
+    if (ta.value === work.source[i]) return;
+    while (flush) if (!(await flush())) return;  // English edits first, so nothing is lost in the re-render
+    setStatus('saving…');
+    try {
+      const y = scrollY, next = await api('/api/works/' + work.slug, { method: 'PATCH', body: { source: { [i]: ta.value } } });
+      work = null; await openWork(next.slug); scrollTo(0, y); setStatus('saved ·');
+      await refreshWorks();  // paragraph counts in the tree
+    } catch (err) { setStatus(err.message, true); }
+  });
+
   // ---------- save ----------
   /* Saving. Only blocks changed since the last successful save are sent (PATCH), so the unload
      flush fits keepalive's ~64 KB cap. Every save runs through one promise chain: saves never
@@ -210,7 +238,10 @@
     finally { w.inflight = null; }  // on failure too, or the retry would think those blocks were saved
   }
   addEventListener('pagehide', () => flush?.(true));
-  grid.addEventListener('input', e => { if (e.target.matches('textarea.tr')) { pop.hidden = true; grow(e.target); save(); } });
+  grid.addEventListener('input', e => {
+    if (e.target.matches('textarea.tr')) { pop.hidden = true; grow(e.target); save(); }
+    else if (e.target.matches('textarea.src')) grow(e.target);
+  });
 
   // ---------- sentence → variants ----------
   grid.addEventListener('click', e => {
@@ -226,6 +257,8 @@
     }
     const w = e.target.closest('.w');
     if (w) return showDictionary(w);
+    const ru = e.target.closest('p.ru');
+    if (ru) return editSource(ru.closest('.cell.src'));
     const chk = e.target.closest('.check');
     if (chk) return checkGrammar(chk.closest('.row'));
     const iss = e.target.closest('.issue');
@@ -342,7 +375,7 @@
   document.addEventListener('mousedown', e => { if (!pop.contains(e.target)) pop.hidden = true; });
   document.addEventListener('keydown', e => {
     if (e.key !== 'Escape') return;
-    if (pop.hidden && document.activeElement?.matches('textarea.tr')) document.activeElement.blur();
+    if (pop.hidden && document.activeElement?.matches('textarea.tr, textarea.src')) document.activeElement.blur();
     pop.hidden = true;
   });
 
@@ -408,12 +441,12 @@
   for (const k of ['A', 'B', 'C']) {
     voicesForm.elements[k + '_freedom'].innerHTML = Object.entries(FREEDOM).map(([n, t]) => `<option value="${n}">${n} · ${t}</option>`).join('');
   }
-  $('#new-btn').onclick = () => {
+  function newWork(project = presetSel.value) {
     $('#new-form').reset(); showNewProject(false);
-    const cur = presetSel.value;
-    if ([...projSel.options].some(o => o.value === cur)) projSel.value = cur;  // the project you are in
+    projSel.value = [...projSel.options].some(o => o.value === project) ? project : '';
     newDlg.showModal();
-  };
+  }
+  $('#new-btn').onclick = () => newWork();
   document.querySelectorAll('dialog .cancel').forEach(b => b.onclick = () => b.closest('dialog').close('cancel'));
   const projSel = $('#new-form select[name=project]'), projName = $('#new-form .new-project');
   const showNewProject = on => { projName.hidden = !on; projName.querySelector('input').required = on; };  // a hidden required field would block submit
@@ -428,7 +461,7 @@
         presets = await api('/api/projects', { method: 'POST', body: { name: project } });
         fillProjectSelect();
       }
-      await api('/api/works', { method: 'POST', body: { slug: f.get('slug'), source: f.get('source'), project, title: f.get('title') } });
+      await api('/api/works', { method: 'POST', body: { slug: f.get('slug'), source: '', project: project === 'plain' ? '' : project, title: f.get('title') } });
       newDlg.close(); showNewProject(false); await refreshWorks(); await openWork(f.get('slug'));
     } catch (err) { setStatus(err.message, true); }
   };

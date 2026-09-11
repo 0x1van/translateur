@@ -193,6 +193,24 @@ def test_saves_are_git_commits():
     assert log[:4] == ["gitty:", "2/2", "gitty:", "1/2"], log
 
 
+def test_patch_source_splits_and_realigns():
+    d = WORKS / "srcy"
+    d.mkdir()
+    (d / "source.md").write_text('---\ntitle: "T"\n---\n\nРаз.\n\nДва.\n')
+    (d / "translation.md").write_text("one\n\ntwo\n")
+    w = appmod.patch_work("srcy", appmod.PatchWork(source={0: "Раз.\n\nПолтора.\n\n\nЕщё."}))
+    assert w["source"] == ["Раз.", "Полтора.", "Ещё.", "Два."]
+    assert w["translation"] == ["one", "", "", "two"]  # the English stays with the first part
+    assert (d / "source.md").read_text().startswith("---\ntitle: T\n---\n\nРаз.")
+    w = appmod.patch_work("srcy", appmod.PatchWork(source={1: ""}))
+    assert w["source"][1] == "" and w["translation"] == [
+        "one",
+        "",
+        "",
+        "two",
+    ]  # emptied, not removed
+
+
 def test_patch_blocks():
     d = WORKS / "patchy"
     d.mkdir()
@@ -348,15 +366,24 @@ def test_e2e(page, server_url):
     page.goto(server_url)
     page.click("#new-btn")
     page.fill("input[name=slug]", "demo-work")
-    page.fill("textarea[name=source]", RU)
     page.select_option("#new-form select[name=project]", "demo")
     page.fill("input[name=title]", "Demo · I")
     page.click("#new-form button[value=ok]")
     page.wait_for_selector(".row")
     assert page.url == server_url + "/demo-work"
+    # a new work is one empty paragraph; the Russian is pasted into the left pane
+    assert page.locator(".row").count() == 1 and page.locator("p.ru .ph").is_visible()
+    page.locator("p.ru").click()
+    page.locator("textarea.src").fill(RU)
+    page.keyboard.press("Escape")
+    page.wait_for_function("document.querySelectorAll('.row').length === 3")
     # the work sits under its project (a collapsible group, opened for it), preset selected
-    group = page.locator("#works details.proj")
-    assert group.locator("summary .t").inner_text() == "demo" and group.evaluate("d => d.open")
+    assert page.locator("#works details.proj summary .t").all_inner_texts() == [
+        "plain",
+        "demo",
+    ]  # = dropdown
+    group = page.locator("#works details.proj[data-project=demo]")
+    assert group.evaluate("d => d.open")
     assert page.locator("#works .work-item.active .t").inner_text() == "Demo · I"
     assert page.locator("#works .work-item.active .prog").inner_text() == "0/3"
     assert page.input_value("#preset") == "demo"
@@ -366,6 +393,17 @@ def test_e2e(page, server_url):
     # straight quotes render as quotes, not as an entity with a clickable "quot"
     assert '"что"' in page.locator(".row").nth(1).locator(".cell.src p").inner_text()
     assert page.locator(".cell.src .w", has_text="quot").count() == 0
+    # editing a Russian paragraph in place: click past the words, retype, leave
+    page.locator(".row").nth(2).locator("p.ru").click(position={"x": 200, "y": 8})
+    assert page.locator(".row").nth(2).locator("textarea.src").is_visible()
+    page.locator(".row").nth(2).locator("textarea.src").fill("Конец. Совсем.")
+    page.keyboard.press("Escape")
+    page.wait_for_function("document.querySelectorAll('.sent').length === 6")
+    assert (WORKS / "demo-work" / "source.md").read_text().endswith("Конец. Совсем.\n")
+    page.locator(".row").nth(2).locator("p.ru").click(position={"x": 200, "y": 8})
+    page.locator(".row").nth(2).locator("textarea.src").fill("Конец.")
+    page.keyboard.press("Escape")
+    page.wait_for_function("document.querySelectorAll('.sent').length === 5")
     assert (WORKS / "demo-work" / "translation.md").read_text() == "\n\n\n\n\n"
 
     # sentence → three variants → pick B → lands in the paired pane and is saved
@@ -383,13 +421,15 @@ def test_e2e(page, server_url):
     assert (
         page.locator("#works .work-item.active .prog").inner_text() == "1/3"
     )  # progress follows saves
-    assert page.locator("#works details.proj summary .prog").inner_text() == "1/3"
     # collapsing a group is remembered across reloads; the active work's group reopens anyway
-    page.locator("#works details.proj summary").click()
-    assert not page.locator("#works details.proj").evaluate("d => d.open")
+    page.locator("#works details.proj[data-project=demo] summary .t").click()
+    assert not group.evaluate("d => d.open")
     page.reload()
     page.wait_for_selector(".row")
-    assert page.locator("#works details.proj").evaluate("d => d.open")
+    assert group.evaluate("d => d.open")
+    assert (
+        page.locator("#works details.proj[data-project=demo] summary .prog").inner_text() == "1/3"
+    )
     page.locator(".row").nth(0).locator(".n").nth(1).click()
     page.wait_for_selector(".variant")
     # "English so far" for sentence 2 is the English of sentence 1, not the paragraph's tail
@@ -525,12 +565,14 @@ def test_e2e(page, server_url):
     assert page.locator("#new-form .new-project").is_visible()
     page.fill("#new-form input[name=project_name]", "fresh-project")
     page.fill("input[name=slug]", "fresh-one")
-    page.fill("textarea[name=source]", "Свежий текст.")
     page.click("#new-form button[value=ok]")
     page.wait_for_function("location.pathname === '/fresh-one'")
     assert (PROJECTS / "fresh-project" / "translation" / "config.md").exists()
     assert page.input_value("#preset") == "fresh-project"
     assert "fresh-project" in page.locator("#works details.proj summary .t").all_inner_texts()
+    page.locator("#works details.proj[data-project=demo] summary .add").click()  # "+" on a group
+    assert page.input_value("#new-form select[name=project]") == "demo"
+    page.click("#new-dialog .cancel")
     page.locator("#works .work-item", has_text="Demo · I").click()
     page.wait_for_function("location.pathname === '/demo-work'")
 
@@ -553,9 +595,8 @@ def test_e2e(page, server_url):
     # an edit made just before switching works is flushed, not lost
     page.click("#new-btn")
     page.fill("input[name=slug]", "other")
-    page.fill("textarea[name=source]", "Другой.")
     page.click("#new-form button[value=ok]")
-    page.wait_for_selector("#works .work-item.active", state="attached")
+    page.wait_for_function("location.pathname === '/other'")
     page.locator("#works .work-item", has_text="Demo · I").click()
     page.wait_for_function("document.querySelector('.row textarea.tr').value !== ''")
     ta2 = page.locator(".row").nth(2).locator("textarea.tr")
