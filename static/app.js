@@ -11,8 +11,8 @@
   const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
   /* "freedom" = sampling temperature with a name the translator can reason about. */
-  const FREEDOM = { strict: 0.3, measured: 0.7, free: 1.0, wild: 1.3 };
-  const DEFAULT_FREEDOM = { A: 'strict', B: 'measured', C: 'wild' };
+  const FREEDOM = { strict: 0.3, measured: 0.7, free: 1.0 };  // hotter than 1.0 stops being translation
+  const DEFAULT_FREEDOM = { A: 'strict', B: 'measured', C: 'free' };
 
   let work = null, presets = [];
   const grid = $('#grid'), pop = $('#pop'), status = $('#status'), worksList = $('#works');
@@ -39,16 +39,18 @@
   function currentVoice() {
     const p = presets.find(p => p.name === presetSel.value) || presets[0];
     const saved = JSON.parse(localStorage.getItem(voiceKey(p.name)) || 'null');
-    return { name: p.name, context: saved?.context ?? p.context, freedom: { ...DEFAULT_FREEDOM, ...(saved?.freedom || {}) } };
+    const freedom = { ...DEFAULT_FREEDOM, ...(saved?.freedom || {}) };
+    for (const k in freedom) if (!(freedom[k] in FREEDOM)) freedom[k] = 'free';  // e.g. the retired 'wild'
+    return { name: p.name, context: saved?.context ?? p.context, freedom };
   }
 
   // ---------- boot ----------
   async function boot() {
     presets = await api('/api/presets');
-    presetSel.innerHTML = presets.map(p => `<option>${esc(p.name)}</option>`).join('');
+    fillProjectSelect();
     presetSel.value = localStorage.getItem('preset') || presets[0].name;
     presetSel.onchange = () => localStorage.setItem('preset', presetSel.value);
-    $('#new-form select[name=project]').innerHTML = '<option value="">none</option>' + presets.slice(1).map(p => `<option>${esc(p.name)}</option>`).join('');
+    fillProjectSelect();
     try {
       const models = await api('/api/models');
       modelSel.innerHTML = models.map(m => `<option>${esc(m)}</option>`).join('');
@@ -64,6 +66,11 @@
      browser), each with its progress — paragraphs that have English out of all paragraphs. */
   const openGroups = () => new Set(JSON.parse(localStorage.getItem('tree:open') || '[]'));
   const prog = (done, total) => `<span class="prog" title="${done} of ${total} paragraphs have English"><i style="--p:${total ? done / total * 100 : 0}%"></i>${done}/${total}</span>`;
+  function fillProjectSelect() {
+    presetSel.innerHTML = presets.map(p => `<option>${esc(p.name)}</option>`).join('');
+    $('#new-form select[name=project]').innerHTML = '<option value="">none</option>'
+      + presets.slice(1).map(p => `<option>${esc(p.name)}</option>`).join('') + '<option value="__new">new project…</option>';
+  }
   async function refreshWorks() {
     const works = await api('/api/works'), groups = {}, open = openGroups();
     works.forEach(w => (groups[w.project] ||= []).push(w));  // sorted by project, then slug
@@ -372,7 +379,7 @@
     while (a < b && /\s/.test(v[a])) a++; while (b > a && /\s/.test(v[b - 1])) b--;
     const term = v.slice(a, b);
     if (!/[A-Za-z]/.test(term) || term.length < 2) { pop.hidden = true; return; }
-    showPop(`<h4>${esc(term)}</h4><span class="tag">alternatives · ${esc(modelSel.value)} · wild · click to replace</span>
+    showPop(`<h4>${esc(term)}</h4><span class="tag">alternatives · ${esc(modelSel.value)} · click to replace</span>
       <section class="alts"><p class="thinking">thinking</p></section><section class="wn"></section><section class="moby"></section>`, x, y);
     const alts = $('.alts', pop), wnBox = $('.wn', pop), moby = $('.moby', pop);
     pop.onclick = ev => {
@@ -402,18 +409,27 @@
     voicesForm.elements[k + '_freedom'].innerHTML = Object.entries(FREEDOM).map(([n, t]) => `<option value="${n}">${n} · ${t}</option>`).join('');
   }
   $('#new-btn').onclick = () => {
-    $('#new-form').reset();
-    const sel = $('#new-form select[name=project]'), cur = presetSel.value;
-    if ([...sel.options].some(o => o.value === cur)) sel.value = cur;  // the project you are in
+    $('#new-form').reset(); showNewProject(false);
+    const cur = presetSel.value;
+    if ([...projSel.options].some(o => o.value === cur)) projSel.value = cur;  // the project you are in
     newDlg.showModal();
   };
   document.querySelectorAll('dialog .cancel').forEach(b => b.onclick = () => b.closest('dialog').close('cancel'));
+  const projSel = $('#new-form select[name=project]'), projName = $('#new-form .new-project');
+  const showNewProject = on => { projName.hidden = !on; projName.querySelector('input').required = on; };  // a hidden required field would block submit
+  projSel.onchange = () => showNewProject(projSel.value === '__new');
   $('#new-form').onsubmit = async e => {
     e.preventDefault();
     const f = new FormData(e.target);
+    let project = f.get('project');
     try {
-      await api('/api/works', { method: 'POST', body: { slug: f.get('slug'), source: f.get('source'), project: f.get('project'), title: f.get('title') } });
-      newDlg.close(); await refreshWorks(); await openWork(f.get('slug'));
+      if (project === '__new') {  // scaffold projects/<name>/translation/ first, then the work under it
+        project = f.get('project_name');
+        presets = await api('/api/projects', { method: 'POST', body: { name: project } });
+        fillProjectSelect();
+      }
+      await api('/api/works', { method: 'POST', body: { slug: f.get('slug'), source: f.get('source'), project, title: f.get('title') } });
+      newDlg.close(); showNewProject(false); await refreshWorks(); await openWork(f.get('slug'));
     } catch (err) { setStatus(err.message, true); }
   };
   $('#voices-btn').onclick = () => {

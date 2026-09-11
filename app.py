@@ -9,6 +9,7 @@ import difflib
 import json
 import os
 import re
+import subprocess
 import threading
 from functools import cache
 from pathlib import Path
@@ -33,7 +34,7 @@ DEFAULT_VOICES = (
     "- B — Literary British English: faithful, precise, unshowy; keeps sentence length and rhythm.\n"
     "- C — Alternative literary phrasing: a different cadence or subtler word, same register."
 )
-DEFAULT_FREEDOM = {"A": 0.3, "B": 0.7, "C": 1.3}  # sampling temperature per voice
+DEFAULT_FREEDOM = {"A": 0.3, "B": 0.7, "C": 1.0}  # sampling temperature per voice
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 _BOUNDARY_RE = re.compile(r'([.!?…]["»”)]*)\s+(?=[«"“(]?[A-ZА-ЯЁ]|[—–-]\s+[«"“(]?[A-ZА-ЯЁ])')
 
@@ -147,7 +148,8 @@ def create_work(body: NewWork) -> dict:
     meta = {k: v for k, v in (("project", body.project), ("title", body.title)) if v}
     fm = "---\n" + yaml.safe_dump(meta, allow_unicode=True) + "---\n\n" if meta else ""
     _atomic_write(d / "source.md", fm + src + "\n")
-    _write_translation(d, [""] * len(split_blocks(src)))
+    with _WRITE_LOCK:
+        _write_translation(d, [""] * len(split_blocks(src)))
     return load_work(body.slug)
 
 
@@ -174,6 +176,28 @@ def _atomic_write(path: Path, text: str) -> None:
 
 def _write_translation(d: Path, blocks: list[str]) -> None:
     _atomic_write(d / "translation.md", "\n\n".join(blocks) + "\n")
+    _git_commit(d.name, f"{d.name}: {sum(1 for b in blocks if b.strip())}/{len(blocks)}")
+
+
+def _git(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", *args], cwd=WORKS_DIR, capture_output=True, text=True, check=False
+    )
+
+
+def _git_commit(slug: str, message: str) -> None:
+    """works/ is its own git repository: every save is a commit, so any earlier state of a
+    translation can be recovered with plain git. Silent when git is missing or nothing changed."""
+    # ponytail: one commit per save; squash with `git rebase` if the log ever gets in the way
+    try:
+        if not (WORKS_DIR / ".git").exists():
+            _git("init", "-q")
+            _git("config", "user.email", "translator@local")
+            _git("config", "user.name", "translator")
+        _git("add", "-A", slug)
+        _git("commit", "-q", "-m", message)
+    except OSError:
+        pass
 
 
 @app.put("/api/works/{slug}")
@@ -260,6 +284,38 @@ def load_presets() -> list[dict]:
     return presets
 
 
+class NewProject(BaseModel):
+    name: str
+
+
+PROJECT_TEMPLATE = """# {name}
+
+## Translation philosophy
+(what this project is after — register, period, fidelity)
+
+## Variant scheme
+- **A — Literal (control):** Closest to the Russian syntax and word order; may read slightly foreign.
+- **B — Project voice:** Faithful, precise, unshowy British English; keeps sentence length and rhythm.
+- **C — Alternative literary phrasing:** A different cadence or subtler word, same register.
+"""
+
+
+@app.post("/api/projects")
+def create_project(body: NewProject) -> list[dict]:
+    """Scaffold projects/<name>/translation/{config.md,glossary.yaml} — the same files the
+    /translate skill uses — and return the refreshed presets."""
+    if not _SLUG_RE.match(body.name):
+        raise HTTPException(400, "project name must be lowercase letters, digits, hyphens")
+    d = PROJECTS_DIR / body.name / "translation"
+    if (d / "config.md").exists():
+        raise HTTPException(409, "project exists")
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "config.md").write_text(PROJECT_TEMPLATE.format(name=body.name))
+    (d / "glossary.yaml").write_text("vocabulary: []\nrejected: []\n")
+    load_presets.cache_clear()
+    return get_presets()
+
+
 @app.get("/api/presets")
 def get_presets() -> list[dict]:
     return [
@@ -271,15 +327,18 @@ def glossary_for(preset_name: str, sentence: str) -> tuple[list[dict], list[dict
     p = next((p for p in load_presets() if p["name"] == preset_name), None)
     if not p:
         return [], []
-    seen = lexicon.lemmas(sentence)
+    tokens = [lexicon.lemmas(w) for w in lexicon.WORD_RE.findall(sentence)]  # lemma set per word
 
     def hit(ru: str) -> bool:
-        """Every content word of the head must occur in the sentence; `a / b` heads list
+        """A head matches when its words occur in the sentence in order and adjacent (so
+        'двадцать лет' does not fire on 'двадцать четыре года'); `a / b` heads list
         alternatives, any of which may match."""
         for alt in ru.split("/"):
-            all_words = lexicon.WORD_RE.findall(alt)
-            words = [w for w in all_words if len(w) > 2] or all_words  # `щи` is a real head
-            if words and all(lexicon.lemmas(w) & seen for w in words):
+            words = [lexicon.lemmas(w) for w in lexicon.WORD_RE.findall(alt)]
+            if words and any(
+                all(words[k] & tokens[i + k] for k in range(len(words)))
+                for i in range(len(tokens) - len(words) + 1)
+            ):
                 return True
         return False
 
@@ -376,6 +435,21 @@ def leaks_cyrillic(text: str) -> bool:
     return bool(re.search(r"[А-Яа-яЁё]", text))
 
 
+def overruns(text: str, source: str) -> bool:
+    """The 'translation' has more sentences than the source, or is far longer: the model started
+    riffing (a continuation, a gloss, a joke) instead of rendering the sentence."""
+    too_many = len(split_sentences(text)) > len(split_sentences(source))
+    return too_many or len(text) > 2.2 * len(source) + 40
+
+
+def badness(text: str, source: str) -> int:
+    """0 = a plausible rendering. Higher = worse: empty, an echo of the Russian, stray Cyrillic,
+    or an overrun. Used to decide whether a calmer second sample should replace the first."""
+    cyr = len(re.findall(r"[А-Яа-яЁё]", text))
+    lat = len(re.findall(r"[A-Za-z]", text))
+    return 4 * (not text) + 2 * (cyr > lat) + (cyr > 0) + overruns(text, source)
+
+
 @app.post("/api/translate")
 async def translate(req: TranslateReq) -> dict:
     """One model call per voice, in parallel, each at its own temperature. The shared system
@@ -385,6 +459,8 @@ async def translate(req: TranslateReq) -> dict:
         "You are a literary translator from Russian into British English.\n\n"
         + (req.context + "\n\n" if req.context else "")
         + "Keep the author's sentence length and structure; never split or merge sentences. "
+        "Every voice is a translation of the same sentence — same content, nothing added, "
+        "nothing dropped; the voices differ in wording and cadence only. "
         "Translate only the sentence between <<< and >>>; everything else is context.\n"
         + (
             "Glossary (use these renderings): "
@@ -412,7 +488,11 @@ async def translate(req: TranslateReq) -> dict:
     user += f"\nTranslate ONLY the sentence between <<< and >>>, nothing else:\n<<< {req.sentence} >>>\n"
 
     async def one(k: str) -> tuple[str, str]:
-        ask = user + f"\nVoice {k} — render it in voice {k}: {voice_line(req.context, k)}"
+        ask = user + (
+            f"\nVoice {k} — render it in voice {k}: {voice_line(req.context, k)}\n"
+            "Output the translation of that one sentence only — the same number of sentences as "
+            "the source, no continuation, no commentary, no added clauses."
+        )
         temp = req.freedom.get(k, DEFAULT_FREEDOM[k])
         cap = 80 + len(req.sentence)  # ≈ 3× the sentence's own tokens
 
@@ -424,8 +504,14 @@ async def translate(req: TranslateReq) -> dict:
             return str(out.get("text", "")).strip()
 
         text = await sample(temp)
-        if not text or leaks_cyrillic(text):  # looped, echoed or half-translated: once more, calmer
-            text = await sample(min(temp, 0.8))
+        bad = badness(text, req.sentence)
+        if (
+            bad
+        ):  # looped, echoed, half-translated or riffing: once more, calmer; keep the better one
+            again = await sample(min(temp, 0.6))
+            bad2 = badness(again, req.sentence)
+            if bad2 < bad or (bad2 == bad and len(again) < len(text)):
+                text = again
         return k, text
 
     return dict(await asyncio.gather(*(one(k) for k in "ABC"))) | {
@@ -474,7 +560,7 @@ async def alternatives(req: AltReq) -> dict:
         f"ENGLISH DRAFT:\n{t[: req.start]}[[{term}]]{t[req.end :]}\n\n"
         f"Alternatives for [[{term}]]:"
     )
-    out = await ollama_json(req.model, system, user, ALT_SCHEMA, 1.3, 160 + 8 * len(term))
+    out = await ollama_json(req.model, system, user, ALT_SCHEMA, 1.0, 160 + 8 * len(term))
     seen = {term.strip().lower()}
     alts = []
     for a in out.get("alternatives", []):

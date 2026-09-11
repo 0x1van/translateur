@@ -14,6 +14,20 @@ import pytest
 # ---- fake ollama: deterministic JSON so the e2e run needs no model ----
 
 
+_RU_LAT = {
+    **dict(zip("абвгдезийклмнопрстуфы", "abvgdeziyklmnoprstufy")),
+    **{"ж": "zh", "х": "kh", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "shch", "ъ": "", "ь": ""},
+    **{"э": "e", "ю": "yu", "я": "ya", "ё": "yo"},
+}
+
+
+def translit(text: str) -> str:
+    """Latin-letter stand-in for a translation, so the fake reads as English to the app's checks."""
+    return "".join(
+        (_RU_LAT.get(c.lower(), c).capitalize() if c.isupper() else _RU_LAT.get(c, c)) for c in text
+    )
+
+
 class FakeOllama(BaseHTTPRequestHandler):
     def log_message(self, *_):
         pass
@@ -46,17 +60,17 @@ class FakeOllama(BaseHTTPRequestHandler):
                 prev = user.split("(continue its voice): ", 1)[1].split("\n", 1)[0]
                 tag += f" [prev: {prev[-12:]}]"
             if (
-                body["options"]["temperature"] > 1.2 and "Жизнь" in sent
+                body["options"]["temperature"] >= 1.0 and "Жизнь" in sent
             ):  # a hot sample cut mid-loop
                 self._send({"message": {"content": '{"text": "Life passed passed passed pas'}})
                 return
             if k == "C" and "Конец" in sent:  # a voice that never yields usable JSON
                 self._send({"message": {"content": "nope"}})
                 return
-            if body["options"]["temperature"] > 1.2:  # a hot model echoing the source
+            if body["options"]["temperature"] >= 1.0:  # a hot model echoing the source
                 out = {"text": sent}
             else:
-                out = {"text": f"{k} of {sent}{tag}"}
+                out = {"text": f"{k} of {translit(sent)}{tag}"}
         self._send({"message": {"content": json.dumps(out)}})
 
     def _send(self, obj):
@@ -151,6 +165,24 @@ def _plain(tmp_path):
     return d
 
 
+def test_saves_are_git_commits():
+    import subprocess
+
+    d = WORKS / "gitty"
+    d.mkdir()
+    (d / "source.md").write_text("Раз.\n\nДва.\n")
+    appmod.patch_work("gitty", appmod.PatchWork(blocks={0: "one"}))
+    appmod.patch_work("gitty", appmod.PatchWork(blocks={1: "two"}))
+    log = subprocess.run(
+        ["git", "log", "--format=%s", "--", "gitty"],
+        cwd=WORKS,
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.split()
+    assert log[:4] == ["gitty:", "2/2", "gitty:", "1/2"], log
+
+
 def test_patch_blocks():
     d = WORKS / "patchy"
     d.mkdir()
@@ -190,6 +222,22 @@ def test_voice_line():
     assert appmod.voice_line(ctx, "B").startswith("B — Project voice")
     assert appmod.voice_line(ctx, "C") == ""
     assert appmod.voice_line(appmod.DEFAULT_VOICES, "C").startswith("C — Alternative")
+
+
+def test_overruns():
+    src = "В то время мне было всего двадцать четыре года."
+    assert not appmod.overruns("At that time I was only twenty-four years old.", src)
+    assert appmod.overruns("Back then I was twenty-four. Twenty-four! Look at me now.", src)
+    assert appmod.overruns("I was twenty-four then, " + "which is basically the age when " * 6, src)
+
+
+def test_badness_ranks_failures():
+    src = "В то время мне было всего двадцать четыре года."
+    good = "At that time I was only twenty-four years old."
+    riff = "Back then I was twenty-four. Twenty-four! Look at me now."
+    assert appmod.badness(good, src) == 0
+    assert appmod.badness("", src) > appmod.badness(src, src) > appmod.badness(riff, src) > 0
+    assert appmod.badness("I was twenty-four тогда.", src) > appmod.badness(good, src)
 
 
 def test_leaks_cyrillic():
@@ -239,6 +287,11 @@ def test_presets_parse_project_config():
     g, r = appmod.glossary_for("demo", "Где выгода?")
     assert g == [{"ru": "выгода", "en": "metrics"}] and r == [{"ru": "выгода", "en": "advantage"}]
     assert appmod.glossary_for("demo", "Ели щи.")[0] == [{"ru": "щи", "en": "shchi"}]
+    # multi-word heads must be contiguous: "ученье свет" does not fire on "ученье — не свет"…
+    assert appmod.glossary_for("demo", "Ученье, а не свет.")[0] == []
+    assert appmod.glossary_for("demo", "Ученье — свет.")[0] == [
+        {"ru": "ученье свет", "en": "learning enlightens"}
+    ]
     assert appmod.glossary_for("demo", "Читал Бокля.")[0] == [
         {"ru": "Бокль (Henry Thomas Buckle)", "en": "Pinker"}
     ]
@@ -317,13 +370,13 @@ def test_e2e(page, server_url):
     page.locator(".row").nth(0).locator(".n").nth(0).click()
     page.wait_for_selector(".variant")
     variants = page.locator(".variant").all_inner_texts()
-    assert variants[0].endswith("A of Он сидел у окна. (glossed)")  # glossary reached the prompt
-    assert "strict" in variants[0] and "wild" in variants[2]  # per-voice freedom labels
-    assert variants[2].endswith("C of Он сидел у окна.")  # the echoed Russian was retried cooler
+    assert variants[0].endswith("A of On sidel u okna. (glossed)")  # glossary reached the prompt
+    assert "strict" in variants[0] and "free" in variants[2]  # per-voice freedom labels
+    assert variants[2].endswith("C of On sidel u okna.")  # the echoed Russian was retried cooler
     assert page.locator(".variants .glossary").inner_text().startswith("окно → window")
     page.locator(".variant[data-k=B]").click()
     ta = page.locator(".row").nth(0).locator("textarea.tr")
-    assert ta.input_value() == "B of Он сидел у окна."
+    assert ta.input_value() == "B of On sidel u okna."
     page.wait_for_function("document.querySelector('#status').textContent.startsWith('saved')")
     assert (
         page.locator("#works .work-item.active .prog").inner_text() == "1/3"
@@ -338,24 +391,24 @@ def test_e2e(page, server_url):
     page.locator(".row").nth(0).locator(".n").nth(1).click()
     page.wait_for_selector(".variant")
     # "English so far" for sentence 2 is the English of sentence 1, not the paragraph's tail
-    assert page.locator(".variant[data-k=A]").inner_text().endswith("[prev: идел у окна.]")
+    assert page.locator(".variant[data-k=A]").inner_text().endswith("[prev: idel u okna.]")
     page.locator(".variant[data-k=C]").click()
-    assert ta.input_value() == "B of Он сидел у окна. C of Жизнь прошла!"
+    assert ta.input_value() == "B of On sidel u okna. C of Zhizn proshla!"
     # a selection made while editing is replaced by the next variant, even though the click blurs
     # clicking an English sentence number must not try to translate (it is a label)
     page.locator(".row").nth(0).locator("p.en .n").first.click()
     assert page.locator(".row").nth(0).locator("textarea.tr").is_visible()
     page.keyboard.press("Escape")
     _edit(page, 0)
-    ta.evaluate("t => t.setSelectionRange(0, 21)")  # "B of Он сидел у окна."
+    ta.evaluate("t => t.setSelectionRange(0, 21)")  # "B of On sidel u okna."
     page.locator(".row").nth(0).locator(".n").nth(0).click()
     page.wait_for_selector(".variant")
     page.locator(".variant[data-k=A]").click()
-    assert ta.input_value() == "A of Он сидел у окна. (glossed) C of Жизнь прошла!"
+    assert ta.input_value() == "A of On sidel u okna. (glossed) C of Zhizn proshla!"
     page.locator(".variant[data-k=B]").click()  # continues right after the previous insert
     assert (
         ta.input_value()
-        == "A of Он сидел у окна. (glossed) B of Он сидел у окна. C of Жизнь прошла!"
+        == "A of On sidel u okna. (glossed) B of On sidel u okna. C of Zhizn proshla!"
     )
     # no space is forced before punctuation when a replaced selection ends at a comma
     ta.evaluate(
@@ -364,23 +417,23 @@ def test_e2e(page, server_url):
     _edit(page, 0)
     ta.evaluate("t => t.setSelectionRange(5, 9)")  # "word"
     page.locator(".variant[data-k=C]").click()
-    assert ta.input_value() == "Take C of Он сидел у окна., then."
+    assert ta.input_value() == "Take C of On sidel u okna., then."
     ta.evaluate(
-        "t => { t.value = 'A of Он сидел у окна. (glossed) B of Он сидел у окна. C of Жизнь прошла!'; t.dispatchEvent(new Event('input', {bubbles: true})); }"
+        "t => { t.value = 'A of On sidel u okna. (glossed) B of On sidel u okna. C of Zhizn proshla!'; t.dispatchEvent(new Event('input', {bubbles: true})); }"
     )
     # a caret left in the middle of the text is where the next variant lands
     _edit(page, 0)
     ta.evaluate("t => t.setSelectionRange(4, 4)")  # after "A of"
     page.locator(".variant[data-k=C]").click()
-    assert ta.input_value().startswith("A of C of Он сидел у окна. Он сидел у окна. (glossed)")
+    assert ta.input_value().startswith("A of C of On sidel u okna. On sidel u okna. (glossed)")
     ta.evaluate(
-        "t => { t.value = 'B of Он сидел у окна. C of Жизнь прошла!'; t.dispatchEvent(new Event('input', {bubbles: true})); }"
+        "t => { t.value = 'B of On sidel u okna. C of Zhizn proshla!'; t.dispatchEvent(new Event('input', {bubbles: true})); }"
     )
     page.wait_for_function("document.querySelector('#status').textContent.startsWith('saved')")
     assert (
         (WORKS / "demo-work" / "translation.md")
         .read_text()
-        .startswith("B of Он сидел у окна. C of")
+        .startswith("B of On sidel u okna. C of")
     )
 
     page.keyboard.press("Escape")  # leave the edit mode the variant clicks kept us in
@@ -459,6 +512,25 @@ def test_e2e(page, server_url):
     page.wait_for_selector(".issue")
     page.locator(".issue").click()
     assert ta2.input_value() == "the end."
+
+    # "+ new" at the top of the tree; a new project can be created right there
+    assert page.locator(".tree-head #new-btn").is_visible()
+    page.click("#new-btn")
+    assert (
+        page.input_value("#new-form select[name=project]") == "demo"
+    )  # defaults to the current project
+    page.select_option("#new-form select[name=project]", "__new")
+    assert page.locator("#new-form .new-project").is_visible()
+    page.fill("#new-form input[name=project_name]", "fresh-project")
+    page.fill("input[name=slug]", "fresh-one")
+    page.fill("textarea[name=source]", "Свежий текст.")
+    page.click("#new-form button[value=ok]")
+    page.wait_for_function("location.pathname === '/fresh-one'")
+    assert (PROJECTS / "fresh-project" / "translation" / "config.md").exists()
+    assert page.input_value("#preset") == "fresh-project"
+    assert "fresh-project" in page.locator("#works details.proj summary .t").all_inner_texts()
+    page.locator("#works .work-item", has_text="Demo · I").click()
+    page.wait_for_function("location.pathname === '/demo-work'")
 
     # an edit made just before switching works is flushed, not lost
     page.click("#new-btn")
@@ -543,9 +615,9 @@ def test_e2e(page, server_url):
         page.locator(".row").nth(2).locator(".n").first.click()
         page.wait_for_selector(".row:nth-child(3) .variant")
         page.locator(".row").nth(2).locator(".variant[data-k=A]").click()
-        assert ta2.input_value() == "the bold casement. A of Конец."
+        assert ta2.input_value() == "the bold casement. A of Konets."
         # a voice with no usable output is shown as such and cannot insert (or delete) anything
         c = page.locator(".row").nth(2).locator(".variant[data-k=C]")
         assert "no usable output" in c.inner_text() and c.is_disabled()
         c.click(force=True)
-        assert ta2.input_value() == "the bold casement. A of Конец."
+        assert ta2.input_value() == "the bold casement. A of Konets."

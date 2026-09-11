@@ -21,9 +21,8 @@
 
 <div class="shell">
   <aside class="tree" aria-label="Works">
-    <h2>works</h2>
+    <div class="tree-head"><h2>works</h2><button id="new-btn" type="button" title="new work or project">+ new</button></div>
     <ul id="works"></ul>
-    <button id="new-btn" type="button">+ new</button>
   </aside>
   <main id="grid" class="grid" aria-label="Source and translation">
     <p class="empty">no work open · pick one on the left, or <em>+ new</em></p>
@@ -39,6 +38,7 @@
       <label>project <select name="project"></select></label>
       <label>title (optional) <input name="title" placeholder="Крыжовник"></label>
     </div>
+    <label class="new-project" hidden>new project name (lowercase, hyphens) <input name="project_name" pattern="[a-z0-9][a-z0-9\-]*" placeholder="gooseberries-chekhov"></label>
     <label>russian source (markdown, blank line between paragraphs)
       <textarea name="source" rows="12" lang="ru" required></textarea></label>
     <div class="row-end"><button value="cancel" type="button" class="cancel">cancel</button><button value="ok">create</button></div>

@@ -287,7 +287,7 @@ def s_translate(pg):
     assert r1.locator(".variants .thinking").is_visible()
     pg.wait_for_selector(".variants .variant", timeout=120000)
     labels = r1.locator(".variant small").all_inner_texts()
-    assert labels == ["strict", "measured", "wild"], labels
+    assert labels == ["strict", "measured", "free"], labels
     texts = r1.locator(".variant").all_inner_texts()
     assert all(len(t) > 10 for t in texts)
     assert not any(any("Ѐ" <= ch <= "ӿ" for ch in t[4:]) for t in texts), (
@@ -521,15 +521,15 @@ def s_prompt(pg):
     pg.click("#voices-btn")
     ctx = pg.input_value("#voices-form textarea[name=context]")
     assert "## Voices" in ctx and "Variant" not in ctx.split("## Voices")[0][-30:]
-    assert pg.input_value("#voices-form select[name=C_freedom]") == "wild"
-    pg.select_option("#voices-form select[name=C_freedom]", "free")
+    assert pg.input_value("#voices-form select[name=C_freedom]") == "free"
+    pg.select_option("#voices-form select[name=C_freedom]", "strict")
     pg.fill("#voices-form textarea[name=context]", ctx + "\nQA MARK")
     pg.click("#voices-form button[value=ok]")
     pg.reload()
     pg.wait_for_selector(".row")
     pg.click("#voices-btn")
     assert pg.input_value("#voices-form textarea[name=context]").endswith("QA MARK")
-    assert pg.input_value("#voices-form select[name=C_freedom]") == "free"
+    assert pg.input_value("#voices-form select[name=C_freedom]") == "strict"
     pg.click("#voices-form .cancel")
     # other project untouched
     pg.select_option("#preset", "plain")
@@ -541,7 +541,7 @@ def s_prompt(pg):
     pg.click("#voices-form .reset")
     pg.click("#voices-btn")
     assert not pg.input_value("#voices-form textarea[name=context]").endswith("QA MARK")
-    assert pg.input_value("#voices-form select[name=C_freedom]") == "wild"
+    assert pg.input_value("#voices-form select[name=C_freedom]") == "free"
     pg.click("#voices-form .cancel")
 
 
