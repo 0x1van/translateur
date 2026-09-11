@@ -83,7 +83,7 @@ def s_boot_empty(pg):
     pg.goto(BASE + "/")
     pg.wait_for_selector("#works .work-item")
     assert pg.locator(".empty").is_visible()
-    assert pg.locator("#works h3").inner_text() == "posts-from-underground"
+    assert pg.locator("#works details.proj summary .t").inner_text() == "posts-from-underground"
     assert pg.locator("#works .work-item").count() == 4
     assert pg.locator("#preset option").count() >= 3
     assert pg.input_value("#model")
@@ -93,7 +93,8 @@ def s_boot_empty(pg):
 def s_route(pg):
     pg.goto(BASE + "/pfu-1-01")
     pg.wait_for_selector(".row")
-    assert pg.locator("#works .work-item.active").inner_text() == "Part I · I"
+    assert pg.locator("#works .work-item.active .t").inner_text() == "Part I · I"
+    assert re.fullmatch(r"\d+/8", pg.locator("#works .work-item.active .prog").inner_text())
     assert pg.input_value("#preset") == "posts-from-underground"
     assert pg.locator(".row").count() == 8
     assert pg.locator(".cell.src .n").count() > 20
@@ -131,7 +132,7 @@ def s_tree_switch(pg):
     pg.evaluate("window.__marker = 1")
     pg.locator("#works .work-item", has_text="vanka").click()
     pg.wait_for_function(
-        "document.querySelector('#works .work-item.active').textContent === 'vanka'"
+        "document.querySelector('#works .work-item.active .t').textContent === 'vanka'"
     )
     assert pg.evaluate("window.__marker") == 1, "page reloaded"
     assert pg.url == BASE + "/vanka"
@@ -192,8 +193,8 @@ def s_new_create(pg):
     assert pg.locator(".row").count() == 3, pg.locator(".row").count()
     assert pg.locator(".cell.src .n").count() == 4  # 2 + 1 + 1 sentences
     assert pg.input_value("#preset") == "chekhov-translation"
-    assert pg.locator("#works .work-item.active").inner_text() == "Крыжовник · ё"
-    assert pg.locator("#works h3").all_inner_texts() == [
+    assert pg.locator("#works .work-item.active .t").inner_text() == "Крыжовник · ё"
+    assert pg.locator("#works details.proj summary .t").all_inner_texts() == [
         "chekhov-translation",
         "posts-from-underground",
     ]

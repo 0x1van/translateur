@@ -122,8 +122,16 @@ def list_works() -> list[dict]:
         return []
     works = []
     for p in WORKS_DIR.glob("*/source.md"):
-        meta, _ = read_source(p.parent)
-        works.append({"slug": p.parent.name, **{k: meta.get(k, "") for k in ("project", "title")}})
+        w = load_work(p.parent.name)
+        works.append(
+            {
+                "slug": w["slug"],
+                "project": w["project"],
+                "title": w["title"],
+                "done": sum(1 for b in w["translation"] if b.strip()),  # paragraphs with English
+                "total": len(w["source"]),
+            }
+        )
     return sorted(works, key=lambda w: (w["project"], w["slug"]))
 
 

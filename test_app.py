@@ -299,9 +299,11 @@ def test_e2e(page, server_url):
     page.click("#new-form button[value=ok]")
     page.wait_for_selector(".row")
     assert page.url == server_url + "/demo-work"
-    # the work sits under its project in the tree, and the project's preset is selected
-    assert page.locator("#works h3").inner_text() == "demo"
-    assert page.locator("#works .work-item.active").inner_text() == "Demo · I"
+    # the work sits under its project (a collapsible group, opened for it), preset selected
+    group = page.locator("#works details.proj")
+    assert group.locator("summary .t").inner_text() == "demo" and group.evaluate("d => d.open")
+    assert page.locator("#works .work-item.active .t").inner_text() == "Demo · I"
+    assert page.locator("#works .work-item.active .prog").inner_text() == "0/3"
     assert page.input_value("#preset") == "demo"
     assert (WORKS / "demo-work" / "source.md").read_text().startswith("---\nproject: demo\ntitle:")
     assert page.locator(".row").count() == 3
@@ -322,6 +324,17 @@ def test_e2e(page, server_url):
     page.locator(".variant[data-k=B]").click()
     ta = page.locator(".row").nth(0).locator("textarea.tr")
     assert ta.input_value() == "B of Он сидел у окна."
+    page.wait_for_function("document.querySelector('#status').textContent.startsWith('saved')")
+    assert (
+        page.locator("#works .work-item.active .prog").inner_text() == "1/3"
+    )  # progress follows saves
+    assert page.locator("#works details.proj summary .prog").inner_text() == "1/3"
+    # collapsing a group is remembered across reloads; the active work's group reopens anyway
+    page.locator("#works details.proj summary").click()
+    assert not page.locator("#works details.proj").evaluate("d => d.open")
+    page.reload()
+    page.wait_for_selector(".row")
+    assert page.locator("#works details.proj").evaluate("d => d.open")
     page.locator(".row").nth(0).locator(".n").nth(1).click()
     page.wait_for_selector(".variant")
     # "English so far" for sentence 2 is the English of sentence 1, not the paragraph's tail
@@ -472,6 +485,9 @@ def test_e2e(page, server_url):
     page.goto(server_url + "/demo-work")  # the work is the path
     page.wait_for_selector(".row")
     assert page.locator("#works .work-item.active").get_attribute("href") == "/demo-work"
+    listed = {w["slug"]: w for w in page.request.get(server_url + "/api/works").json()}
+    assert (listed["demo-work"]["done"], listed["demo-work"]["total"]) == (2, 3), listed
+    assert (listed["other"]["done"], listed["other"]["total"]) == (0, 1)
     assert page.locator(".row").nth(2).locator("textarea.tr").input_value() == "the end."
     assert page.locator(".row").nth(1).locator("textarea.tr").input_value() == ""
     _edit(page, 1).fill("after reload")

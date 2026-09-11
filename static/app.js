@@ -60,15 +60,41 @@
     const slug = location.pathname.slice(1) || localStorage.getItem('work');
     if (slug && worksList.querySelector(`[data-slug="${CSS.escape(slug)}"]`)) await openWork(slug);
   }
+  /* The tree: works grouped under their project in a collapsible <details> (open state kept per
+     browser), each with its progress — paragraphs that have English out of all paragraphs. */
+  const openGroups = () => new Set(JSON.parse(localStorage.getItem('tree:open') || '[]'));
+  const prog = (done, total) => `<span class="prog" title="${done} of ${total} paragraphs have English"><i style="--p:${total ? done / total * 100 : 0}%"></i>${done}/${total}</span>`;
   async function refreshWorks() {
-    const works = await api('/api/works'), groups = {};
+    const works = await api('/api/works'), groups = {}, open = openGroups();
     works.forEach(w => (groups[w.project] ||= []).push(w));  // sorted by project, then slug
-    const item = w => `<li><a class="work-item" href="/${esc(w.slug)}" data-slug="${esc(w.slug)}" title="${esc(w.slug)}">${esc(w.title || w.slug)}</a></li>`;
-    worksList.innerHTML = Object.entries(groups).map(([p, ws]) =>
-      p ? `<li><h3>${esc(p)}</h3><ul>${ws.map(item).join('')}</ul></li>` : ws.map(item).join('')).join('')
-      || '<li class="clean">none yet ·</li>';
+    const item = w => `<li><a class="work-item" href="/${esc(w.slug)}" data-slug="${esc(w.slug)}" title="${esc(w.slug)}"><span class="t">${esc(w.title || w.slug)}</span>${prog(w.done, w.total)}</a></li>`;
+    worksList.innerHTML = Object.entries(groups).map(([p, ws]) => {
+      if (!p) return ws.map(item).join('');
+      const done = ws.reduce((n, w) => n + w.done, 0), total = ws.reduce((n, w) => n + w.total, 0);
+      return `<li><details class="proj" data-project="${esc(p)}"${open.has(p) || p === work?.project ? ' open' : ''}>
+        <summary><span class="t">${esc(p)}</span>${prog(done, total)}</summary><ul>${ws.map(item).join('')}</ul></details></li>`;
+    }).join('') || '<li class="clean">none yet ·</li>';
   }
+  worksList.addEventListener('toggle', e => {
+    const d = e.target; if (!d.matches?.('details.proj')) return;
+    const open = openGroups(); d.open ? open.add(d.dataset.project) : open.delete(d.dataset.project);
+    localStorage.setItem('tree:open', JSON.stringify([...open]));
+  }, true);
   worksList.addEventListener('click', e => { const a = e.target.closest('.work-item'); if (a && !e.metaKey && !e.ctrlKey) { e.preventDefault(); openWork(a.dataset.slug); } });
+  /* Progress of the open work, kept current from what is on screen (no round trip). */
+  function markProgress() {
+    if (!work) return;
+    const a = worksList.querySelector(`.work-item[data-slug="${CSS.escape(work.slug)}"]`);
+    if (!a) return;
+    const done = work.translation.filter(b => b.trim()).length, total = work.source.length;
+    const was = a.querySelector('.prog'), prev = +was.textContent.split('/')[0];
+    a.querySelector('.prog').outerHTML = prog(done, total);
+    if (done !== prev) {  // the project total moves with it
+      const d = a.closest('details.proj'); if (!d) return;
+      const [pd, pt] = d.querySelector('summary .prog').textContent.split('/').map(Number);
+      d.querySelector('summary .prog').outerHTML = prog(pd + done - prev, pt);
+    }
+  }
 
   // ---------- render ----------
   let loading = 0;
@@ -84,6 +110,8 @@
     localStorage.setItem('work', slug);
     history.replaceState(null, '', '/' + slug);
     worksList.querySelectorAll('.work-item').forEach(b => b.classList.toggle('active', b.dataset.slug === slug));
+    const group = worksList.querySelector(`.work-item[data-slug="${CSS.escape(slug)}"]`)?.closest('details.proj');
+    if (group) group.open = true;
     if (presets.some(p => p.name === work.project)) presetSel.value = work.project;  // the work's project wins
     let n = 0;
     grid.innerHTML = work.source.map((block, i) => `
@@ -168,6 +196,7 @@
         await api('/api/works/' + w.slug, { method: 'PATCH', keepalive: unloading, body: { blocks, seq } });
         for (const i in blocks) w.saved[i] = blocks[i];
       }
+      if (w === work) markProgress();
       if (flush === mine) { flush = null; clearTimeout(saveTimer); setStatus('saved ·'); }  // else newer edits are queued
       return true;
     } catch (e) { setStatus(e.message + ' · unsaved', true); return false; }  // flush stays armed: retried on the next save or switch
@@ -372,7 +401,12 @@
   for (const k of ['A', 'B', 'C']) {
     voicesForm.elements[k + '_freedom'].innerHTML = Object.entries(FREEDOM).map(([n, t]) => `<option value="${n}">${n} · ${t}</option>`).join('');
   }
-  $('#new-btn').onclick = () => { $('#new-form').reset(); newDlg.showModal(); };
+  $('#new-btn').onclick = () => {
+    $('#new-form').reset();
+    const sel = $('#new-form select[name=project]'), cur = presetSel.value;
+    if ([...sel.options].some(o => o.value === cur)) sel.value = cur;  // the project you are in
+    newDlg.showModal();
+  };
   document.querySelectorAll('dialog .cancel').forEach(b => b.onclick = () => b.closest('dialog').close('cancel'));
   $('#new-form').onsubmit = async e => {
     e.preventDefault();
