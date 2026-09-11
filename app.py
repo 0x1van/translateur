@@ -28,12 +28,11 @@ WORKS_DIR = Path(os.environ.get("WORKS_DIR", HERE / "works"))
 PROJECTS_DIR = Path(os.environ.get("PROJECTS_DIR", HERE.parent.parent / "projects"))
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434").rstrip("/")
 
-DEFAULT_VOICES = (
-    "## Voices\n"
-    "- A — Literal: closest to the Russian syntax and word order; may read slightly foreign.\n"
-    "- B — Literary British English: faithful, precise, unshowy; keeps sentence length and rhythm.\n"
-    "- C — Alternative literary phrasing: a different cadence or subtler word, same register."
-)
+DEFAULT_VOICES = {
+    "A": "Literal: closest to the Russian syntax and word order; may read slightly foreign.",
+    "B": "Literary British English: faithful, precise, unshowy; keeps sentence length and rhythm.",
+    "C": "Alternative literary phrasing: a different cadence or subtler word, same register.",
+}
 DEFAULT_FREEDOM = {"A": 0.3, "B": 0.7, "C": 1.0}  # sampling temperature per voice
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 _BOUNDARY_RE = re.compile(r'([.!?…]["»”)]*)\s+(?=[«"“(]?[A-ZА-ЯЁ]|[—–-]\s+[«"“(]?[A-ZА-ЯЁ])')
@@ -242,15 +241,49 @@ def _sections(md: str) -> dict[str, str]:
 _SKIP_SECTIONS = {"Variant scheme", "Output shape", "Voice-continuity source"}
 
 
+def about_path(name: str) -> Path:
+    """Where a project's plain-words description lives: with the project, or in works/ for 'plain'."""
+    return (
+        WORKS_DIR / "about.md"
+        if name == "plain"
+        else PROJECTS_DIR / name / "translation" / "about.md"
+    )
+
+
+def _seed_description(md: str, sec: dict[str, str]) -> str:
+    """A first description for a project that has a config but no about.md: its intro paragraph
+    plus its translation philosophy, minus markdown noise."""
+    intro = re.split(r"^## ", md, maxsplit=1, flags=re.MULTILINE)[0]
+    intro = re.sub(r"^# .*\n", "", intro).strip()
+    gist = next(
+        (
+            sec[h]
+            for h in ("Project description", "Translation philosophy", "Narrator")
+            if sec.get(h)
+        ),
+        "",
+    )
+    text = "\n\n".join(t for t in (intro, gist) if t)
+    return re.sub(r"[*`]|\[([^\]]*)\]\([^)]*\)", r"\1", text).strip()
+
+
 @cache
 def load_presets() -> list[dict]:
-    presets = [{"name": "plain", "context": DEFAULT_VOICES, "glossary": [], "rejected": []}]
+    presets = [
+        {"name": "plain", "voices": DEFAULT_VOICES, "seed": "", "glossary": [], "rejected": []}
+    ]
     for cfg in sorted(PROJECTS_DIR.glob("*/translation/config.md")):
-        sec = _sections(cfg.read_text())
-        # the project's own Variant scheme is the voices section; otherwise the defaults
-        voices = sec.get("Variant scheme") and "## Voices\n" + sec["Variant scheme"]
-        context = "\n\n".join(f"## {h}\n{b}" for h, b in sec.items() if h not in _SKIP_SECTIONS)
-        context = (context + "\n\n" if context else "") + (voices or DEFAULT_VOICES)
+        md = cfg.read_text()
+        sec = _sections(md)
+        voices = dict(
+            DEFAULT_VOICES
+        )  # the project's own variant scheme overrides, letter by letter
+        for m in re.finditer(
+            r"^- \*\*([ABC]) — ([^*]+?):?\*\*:?\s*(.*)$",
+            sec.get("Variant scheme", ""),
+            re.MULTILINE,
+        ):
+            voices[m.group(1)] = f"{m.group(2).strip()}: {m.group(3).strip()}"
         glossary, rejected = [], []
         gpath = cfg.with_name("glossary.yaml")
         if gpath.exists():
@@ -276,12 +309,35 @@ def load_presets() -> list[dict]:
         presets.append(
             {
                 "name": cfg.parent.parent.name,
-                "context": context,
+                "voices": voices,
+                "seed": _seed_description(md, sec),
                 "glossary": [dict(t) for t in dict.fromkeys(tuple(g.items()) for g in glossary)],
                 "rejected": rejected,
             }
         )
     return presets
+
+
+def description_of(name: str) -> str:
+    p = about_path(name)
+    if p.exists():
+        return p.read_text().strip()
+    return next((x["seed"] for x in load_presets() if x["name"] == name), "")
+
+
+class About(BaseModel):
+    description: str
+
+
+@app.put("/api/projects/{name}")
+def save_about(name: str, body: About) -> dict:
+    """The project's description, in the translator's own words; the app builds the prompt around it."""
+    if not any(x["name"] == name for x in load_presets()):
+        raise HTTPException(404, "no such project")
+    p = about_path(name)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_write(p, body.description.strip() + "\n")
+    return {"ok": True}
 
 
 class NewProject(BaseModel):
@@ -319,7 +375,8 @@ def create_project(body: NewProject) -> list[dict]:
 @app.get("/api/presets")
 def get_presets() -> list[dict]:
     return [
-        {k: v for k, v in p.items() if k not in ("glossary", "rejected")} for p in load_presets()
+        {"name": p["name"], "voices": p["voices"], "description": description_of(p["name"])}
+        for p in load_presets()
     ]
 
 
@@ -414,7 +471,7 @@ class TranslateReq(BaseModel):
     model: str
     preset: str = "plain"
     freedom: dict[str, float] = DEFAULT_FREEDOM
-    context: str = DEFAULT_VOICES  # the system prompt: project notes + the A/B/C voices
+    description: str = ""  # the project in the translator's own words; the app writes the rest
     sentence: str
     prev_ru: str = ""
     prev_en: str = ""
@@ -422,12 +479,27 @@ class TranslateReq(BaseModel):
     guidance: str = ""
 
 
-def voice_line(context: str, k: str) -> str:
-    """The bullet describing voice k, from the Voices section if there is one — never a prose
-    line that merely starts with the letter ('A constrained adaptation…')."""
-    _, _, voices = context.rpartition("## Voices")
-    m = re.search(rf"^[ \t]*[-*][ \t]*\**{k}\b[^\n]*", voices or context, re.MULTILINE)
-    return m.group(0).strip("-* ") if m else ""
+def voices_for(preset_name: str) -> dict[str, str]:
+    return next((p["voices"] for p in load_presets() if p["name"] == preset_name), DEFAULT_VOICES)
+
+
+def system_prompt(description: str, voices: dict[str, str]) -> str:
+    """Everything the model needs besides the sentence: role, the project in plain words, the
+    three voices, the rules. The translator writes only the description."""
+    return (
+        "You are a literary translator from Russian into British English.\n\n"
+        + (
+            f"About this project, in the translator's words:\n{description}\n\n"
+            if description
+            else ""
+        )
+        + "Three voices are asked for, lettered A, B and C:\n"
+        + "".join(f"- {k} — {v}\n" for k, v in voices.items())
+        + "\nKeep the author's sentence length and structure; never split or merge sentences. "
+        "Every voice is a translation of the same sentence — same content, nothing added, "
+        "nothing dropped; the voices differ in wording and cadence only. "
+        "Translate only the sentence between <<< and >>>; everything else is context.\n"
+    )
 
 
 def leaks_cyrillic(text: str) -> bool:
@@ -455,13 +527,9 @@ async def translate(req: TranslateReq) -> dict:
     """One model call per voice, in parallel, each at its own temperature. The shared system
     prompt comes first so Ollama's prefix cache serves all three."""
     glossary, rejected = glossary_for(req.preset, req.sentence)
+    voices = voices_for(req.preset)
     system = (
-        "You are a literary translator from Russian into British English.\n\n"
-        + (req.context + "\n\n" if req.context else "")
-        + "Keep the author's sentence length and structure; never split or merge sentences. "
-        "Every voice is a translation of the same sentence — same content, nothing added, "
-        "nothing dropped; the voices differ in wording and cadence only. "
-        "Translate only the sentence between <<< and >>>; everything else is context.\n"
+        system_prompt(req.description, voices)
         + (
             "Glossary (use these renderings): "
             + "; ".join(f"{g['ru']} → {g['en']}" for g in glossary)
@@ -489,7 +557,7 @@ async def translate(req: TranslateReq) -> dict:
 
     async def one(k: str) -> tuple[str, str]:
         ask = user + (
-            f"\nVoice {k} — render it in voice {k}: {voice_line(req.context, k)}\n"
+            f"\nVoice {k} — render it in voice {k}: {voices[k]}\n"
             "Output the translation of that one sentence only — the same number of sentences as "
             "the source, no continuation, no commentary, no added clauses."
         )
@@ -523,7 +591,7 @@ async def translate(req: TranslateReq) -> dict:
 class AltReq(BaseModel):
     model: str
     preset: str = "plain"
-    context: str = ""
+    description: str = ""
     sentence: str  # the Russian block the draft renders
     translation: str  # the English draft
     start: int
@@ -547,7 +615,11 @@ async def alternatives(req: AltReq) -> dict:
     _, rejected = glossary_for(req.preset, req.sentence)
     system = (
         "You are a literary translator from Russian into British English.\n\n"
-        + (req.context + "\n\n" if req.context else "")
+        + (
+            f"About this project, in the translator's words:\n{req.description}\n\n"
+            if req.description
+            else ""
+        )
         + "The translator is revising one span of their English draft, marked [[like this]]. "
         "Propose 8 alternative renderings for that span only: drop-in replacements that fit the "
         "grammar of the sentence, ranging from the plain to the bold, each different from the "

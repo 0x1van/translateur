@@ -24,10 +24,12 @@ uv run uvicorn app:app --reload --port 8765   # http://127.0.0.1:8765 (8000 is t
   and opening one selects its preset. Bulk import example:
   `projects/posts-from-underground/scripts/import_translator.py` (one work per chapter, published
   English aligned to the Russian paragraphs).
-- **project** — the system prompt is built from `projects/*/translation/config.md` (policy
-  sections, then its variant scheme as `## Voices` A/B/C) and `glossary.yaml` (matching terms and
-  rejected terms are injected per sentence). *system prompt* lets you edit the whole thing, plus
-  the per-voice freedom (temperature); overrides are kept per browser.
+- **about project** — a few sentences in your own words about the text and how it should read,
+  saved as `projects/<name>/translation/about.md` (seeded from the project's config the first
+  time). The app writes the actual prompt around it: role, rules, output format and the three
+  voices (the project's own variant scheme from `config.md` if it has one, else the defaults).
+  `glossary.yaml` terms and rejected terms are injected per sentence. The per-voice freedom
+  (temperature) is kept per browser.
 
 Env: `OLLAMA_URL` (default `http://localhost:11434`), `WORKS_DIR`, `PROJECTS_DIR`.
 

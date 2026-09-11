@@ -16,8 +16,18 @@ import pytest
 
 _RU_LAT = {
     **dict(zip("абвгдезийклмнопрстуфы", "abvgdeziyklmnoprstufy")),
-    **{"ж": "zh", "х": "kh", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "shch", "ъ": "", "ь": ""},
-    **{"э": "e", "ю": "yu", "я": "ya", "ё": "yo"},
+    "ж": "zh",
+    "х": "kh",
+    "ц": "ts",
+    "ч": "ch",
+    "ш": "sh",
+    "щ": "shch",
+    "ъ": "",
+    "ь": "",
+    "э": "e",
+    "ю": "yu",
+    "я": "ya",
+    "ё": "yo",
 }
 
 
@@ -213,17 +223,6 @@ def test_patch_blocks():
     assert appmod.load_work("patchy")["translation"] == ["t0", "t1", "t2"]
 
 
-def test_voice_line():
-    ctx = (
-        "# PfU\n\nA constrained translation-adaptation of Dostoevsky.\n\n## Voices\n"
-        "- **A — Literal (control):** Closest to the syntax.\n- **B — Project voice:** Modern.\n"
-    )
-    assert appmod.voice_line(ctx, "A") == "A — Literal (control):** Closest to the syntax."
-    assert appmod.voice_line(ctx, "B").startswith("B — Project voice")
-    assert appmod.voice_line(ctx, "C") == ""
-    assert appmod.voice_line(appmod.DEFAULT_VOICES, "C").startswith("C — Alternative")
-
-
 def test_overruns():
     src = "В то время мне было всего двадцать четыре года."
     assert not appmod.overruns("At that time I was only twenty-four years old.", src)
@@ -272,10 +271,13 @@ def test_hunks():
 
 def test_presets_parse_project_config():
     p = {p["name"]: p for p in appmod.load_presets()}
-    assert p["plain"]["context"] == appmod.DEFAULT_VOICES
-    assert "- **B — House voice:** Quiet precision." in p["demo"]["context"]
-    assert "Translation philosophy" in p["demo"]["context"]
-    assert "Output shape" not in p["demo"]["context"]
+    assert p["plain"]["voices"] == appmod.DEFAULT_VOICES
+    assert p["demo"]["voices"]["B"] == "House voice: Quiet precision."
+    assert appmod.description_of("demo") == "Faithful."  # seeded from the config's philosophy
+    appmod.save_about("demo", appmod.About(description="Chekhov, quiet, no modernising."))
+    assert appmod.description_of("demo") == "Chekhov, quiet, no modernising."
+    prompt = appmod.system_prompt(appmod.description_of("demo"), p["demo"]["voices"])
+    assert "About this project" in prompt and "- B — House voice" in prompt and "JSON" not in prompt
     assert p["demo"]["glossary"][0] == {"ru": "окно", "en": "window"}
     g, r = appmod.glossary_for("demo", "Он сидел у окна.")
     assert g == [{"ru": "окно", "en": "window"}] and r == [{"ru": "окно", "en": "casement"}]
@@ -371,7 +373,7 @@ def test_e2e(page, server_url):
     page.wait_for_selector(".variant")
     variants = page.locator(".variant").all_inner_texts()
     assert variants[0].endswith("A of On sidel u okna. (glossed)")  # glossary reached the prompt
-    assert "strict" in variants[0] and "free" in variants[2]  # per-voice freedom labels
+    assert "Literal (control) · strict" in variants[0] and "free" in variants[2]  # voice · freedom
     assert variants[2].endswith("C of On sidel u okna.")  # the echoed Russian was retried cooler
     assert page.locator(".variants .glossary").inner_text().startswith("окно → window")
     page.locator(".variant[data-k=B]").click()
@@ -531,6 +533,22 @@ def test_e2e(page, server_url):
     assert "fresh-project" in page.locator("#works details.proj summary .t").all_inner_texts()
     page.locator("#works .work-item", has_text="Demo · I").click()
     page.wait_for_function("location.pathname === '/demo-work'")
+
+    # "about project": a plain description, saved with the project, not a prompt to maintain
+    page.click("#voices-btn")
+    assert (
+        page.input_value("#voices-form textarea[name=description]")
+        == "Chekhov, quiet, no modernising."
+    )
+    page.fill("#voices-form textarea[name=description]", "Short and dry.")
+    page.click("#voices-form button[value=ok]")
+    page.wait_for_function("!document.querySelector('#voices-dialog').open")
+    assert (PROJECTS / "demo" / "translation" / "about.md").read_text() == "Short and dry.\n"
+    page.reload()
+    page.wait_for_selector(".row")
+    page.click("#voices-btn")
+    assert page.input_value("#voices-form textarea[name=description]") == "Short and dry."
+    page.click("#voices-form .cancel")
 
     # an edit made just before switching works is flushed, not lost
     page.click("#new-btn")

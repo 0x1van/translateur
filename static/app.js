@@ -34,14 +34,14 @@
   };
   applyTheme(localStorage.getItem('theme'));
 
-  // ---------- system prompt (project preset + per-browser overrides) ----------
+  // ---------- project: description lives on the server; freedom per browser ----------
   const voiceKey = name => 'voices:' + name;
   function currentVoice() {
     const p = presets.find(p => p.name === presetSel.value) || presets[0];
     const saved = JSON.parse(localStorage.getItem(voiceKey(p.name)) || 'null');
     const freedom = { ...DEFAULT_FREEDOM, ...(saved?.freedom || {}) };
     for (const k in freedom) if (!(freedom[k] in FREEDOM)) freedom[k] = 'free';  // e.g. the retired 'wild'
-    return { name: p.name, context: saved?.context ?? p.context, freedom };
+    return { name: p.name, description: p.description, voices: p.voices, freedom };
   }
 
   // ---------- boot ----------
@@ -262,10 +262,10 @@
     const ctl = box.ctl = new AbortController();
     try {
       const out = await api('/api/translate', { method: 'POST', signal: ctl.signal, body: {
-        model: modelSel.value, preset: v.name, context: v.context, freedom,
+        model: modelSel.value, preset: v.name, description: v.description, freedom,
         sentence: sents[j], prev_ru, prev_en, next_ru, guidance } });
       $('.thinking', box).outerHTML = ['A', 'B', 'C'].map(k =>
-        `<button type="button" class="variant" data-k="${k}"><b>${k}</b><small>${esc(v.freedom[k])}</small>${out[k] ? esc(out[k]) : '<i class="none">no usable output · try again</i>'}</button>`).join('') +
+        `<button type="button" class="variant" data-k="${k}"><b>${k}</b><small>${esc((v.voices[k] || '').split(':')[0])} · ${esc(v.freedom[k])}</small>${out[k] ? esc(out[k]) : '<i class="none">no usable output · try again</i>'}</button>`).join('') +
         (out.glossary.length || out.rejected.length ? `<p class="glossary">${
           out.glossary.map(g => `${esc(g.ru)} → ${esc(g.en)}`).join(' · ')}${
           out.rejected.map(r => ` · not “${esc(r.en)}”`).join('')}</p>` : '');
@@ -397,7 +397,7 @@
     const ctl = altCtl = new AbortController(), vc = currentVoice();
     try {
       const r = await api('/api/alternatives', { method: 'POST', signal: ctl.signal, body: {
-        model: modelSel.value, preset: vc.name, context: vc.context,
+        model: modelSel.value, preset: vc.name, description: vc.description,
         sentence: work.source[+ta.closest('.row').dataset.i], translation: v, start: a, end: b } });
       alts.innerHTML = r.alternatives.length ? chips(r.alternatives) : '<p class="none">none ·</p>';
     } catch (err) { if (err.name !== 'AbortError') alts.innerHTML = `<p class="none">${esc(err.message)}</p>`; }
@@ -435,16 +435,22 @@
   $('#voices-btn').onclick = () => {
     const v = currentVoice();
     for (const k of ['A', 'B', 'C']) voicesForm.elements[k + '_freedom'].value = v.freedom[k];
-    voicesForm.elements.context.value = v.context;
+    voicesForm.elements.description.value = v.description;
     voicesDlg.showModal();
   };
-  $('.reset', voicesForm).onclick = () => { localStorage.removeItem(voiceKey(presetSel.value)); voicesDlg.close(); };
-  voicesForm.onsubmit = e => {
+  $('.reset', voicesForm).onclick = () => {  // freedom back to defaults; the description stays yours
+    localStorage.removeItem(voiceKey(presetSel.value));
+    for (const k of ['A', 'B', 'C']) voicesForm.elements[k + '_freedom'].value = DEFAULT_FREEDOM[k];
+  };
+  voicesForm.onsubmit = async e => {
     e.preventDefault();
-    const f = e.target.elements;
-    localStorage.setItem(voiceKey(presetSel.value), JSON.stringify({
-      freedom: { A: f.A_freedom.value, B: f.B_freedom.value, C: f.C_freedom.value }, context: f.context.value }));
-    voicesDlg.close();
+    const f = e.target.elements, name = presetSel.value;
+    localStorage.setItem(voiceKey(name), JSON.stringify({ freedom: { A: f.A_freedom.value, B: f.B_freedom.value, C: f.C_freedom.value } }));
+    try {
+      await api('/api/projects/' + encodeURIComponent(name), { method: 'PUT', body: { description: f.description.value } });
+      presets.find(p => p.name === name).description = f.description.value.trim();
+      voicesDlg.close();
+    } catch (err) { setStatus(err.message, true); }
   };
 
   boot().catch(e => setStatus(e.message, true));

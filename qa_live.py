@@ -287,7 +287,9 @@ def s_translate(pg):
     assert r1.locator(".variants .thinking").is_visible()
     pg.wait_for_selector(".variants .variant", timeout=120000)
     labels = r1.locator(".variant small").all_inner_texts()
-    assert labels == ["strict", "measured", "free"], labels
+    assert [x.split(" · ")[-1] for x in labels] == ["strict", "measured", "free"], (
+        labels
+    )  # voice · freedom
     texts = r1.locator(".variant").all_inner_texts()
     assert all(len(t) > 10 for t in texts)
     assert not any(any("Ѐ" <= ch <= "ӿ" for ch in t[4:]) for t in texts), (
@@ -338,7 +340,9 @@ def s_translate_replace(pg):
     ta.evaluate("t => t.setSelectionRange(0, 16)")  # "First paragraph."
     row(pg, 0).locator(".n").first.click()
     pg.wait_for_selector(".variants .variant", timeout=120000)
-    variant = row(pg, 0).locator(".variant[data-k=A]").inner_text()[len("A strict") :].strip()
+    variant = (
+        row(pg, 0).locator(".variant[data-k=A]").evaluate("b => b.lastChild.textContent").strip()
+    )
     # selection must still be in place: clicking the variant blurs the textarea first? check both paths
     row(pg, 0).locator(".variant[data-k=A]").click()
     saved(pg)
@@ -517,35 +521,28 @@ def s_theme(pg):
     pg.click("#theme-btn")  # back
 
 
-@scenario("system prompt: dialog shows project prompt; save persists per project; reset restores")
+@scenario("about project: plain description saved on disk; freedom per browser; reset")
 def s_prompt(pg):
     pg.goto(BASE + "/pfu-1-01")
     pg.wait_for_selector(".row")
     pg.click("#voices-btn")
-    ctx = pg.input_value("#voices-form textarea[name=context]")
-    assert "## Voices" in ctx and "Variant" not in ctx.split("## Voices")[0][-30:]
+    desc = pg.input_value("#voices-form textarea[name=description]")
+    assert desc and "##" not in desc and "JSON" not in desc, desc[:80]  # words, not a prompt
     assert pg.input_value("#voices-form select[name=C_freedom]") == "free"
     pg.select_option("#voices-form select[name=C_freedom]", "strict")
-    pg.fill("#voices-form textarea[name=context]", ctx + "\nQA MARK")
+    pg.fill("#voices-form textarea[name=description]", desc + "\nQA MARK")
     pg.click("#voices-form button[value=ok]")
+    pg.wait_for_function("!document.querySelector('#voices-dialog').open")
     pg.reload()
     pg.wait_for_selector(".row")
     pg.click("#voices-btn")
-    assert pg.input_value("#voices-form textarea[name=context]").endswith("QA MARK")
+    assert pg.input_value("#voices-form textarea[name=description]").endswith("QA MARK")
     assert pg.input_value("#voices-form select[name=C_freedom]") == "strict"
-    pg.click("#voices-form .cancel")
-    # other project untouched
-    pg.select_option("#preset", "plain")
-    pg.click("#voices-btn")
-    assert "QA MARK" not in pg.input_value("#voices-form textarea[name=context]")
-    pg.click("#voices-form .cancel")
-    pg.select_option("#preset", "posts-from-underground")
-    pg.click("#voices-btn")
+    pg.fill("#voices-form textarea[name=description]", desc)  # put it back
     pg.click("#voices-form .reset")
-    pg.click("#voices-btn")
-    assert not pg.input_value("#voices-form textarea[name=context]").endswith("QA MARK")
     assert pg.input_value("#voices-form select[name=C_freedom]") == "free"
-    pg.click("#voices-form .cancel")
+    pg.click("#voices-form button[value=ok]")
+    pg.wait_for_function("!document.querySelector('#voices-dialog').open")
 
 
 @scenario("model select persists across reload")

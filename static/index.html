@@ -13,7 +13,7 @@
 <header class="bar">
   <span class="brand">nova·nevédoma · translator</span>
   <label>project <select id="preset"></select></label>
-  <button id="voices-btn" type="button">system prompt</button>
+  <button id="voices-btn" type="button">about project</button>
   <label>model <select id="model"></select></label>
   <button id="theme-btn" type="button" aria-label="Toggle dark theme">dark</button>
   <span id="status" class="status" aria-live="polite"></span>
@@ -47,14 +47,14 @@
 
 <dialog id="voices-dialog">
   <form method="dialog" id="voices-form">
-    <p class="hint">the system prompt · describe voices A, B and C in it however you like · edits are kept in this browser per project ·</p>
-    <label>system prompt <textarea name="context" rows="16"></textarea></label>
+    <p class="hint">a few sentences about the text and how you want it to read, in your own words · the app writes the rest of the prompt ·</p>
+    <label>about this project <textarea name="description" rows="6" placeholder="Chekhov, 1890s, faithful and unshowy; quiet precision, no modernising."></textarea></label>
     <div class="freedom">
       <label>A freedom <select name="A_freedom"></select></label>
       <label>B freedom <select name="B_freedom"></select></label>
       <label>C freedom <select name="C_freedom"></select></label>
     </div>
-    <div class="row-end"><button type="button" class="reset">reset to preset</button><button type="button" class="cancel">cancel</button><button value="ok">save</button></div>
+    <div class="row-end"><button type="button" class="reset">reset</button><button type="button" class="cancel">cancel</button><button value="ok">save</button></div>
   </form>
 </dialog>
 
