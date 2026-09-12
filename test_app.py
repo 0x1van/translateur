@@ -696,4 +696,4 @@ def test_e2e(page, server_url):
         c = page.locator(".row").nth(2).locator(".variant[data-k=C]")
         assert "no usable output" in c.inner_text() and c.is_disabled()
         c.click(force=True)
-        assert ta2.input_value() == "the bold casement. A of Konets."
+        assert ta2.input_value() == "A of Konets."
