@@ -151,6 +151,9 @@ textarea.src:focus { outline: none; }
 .variant b { font-family: var(--font-mono); font-size: 0.65rem; margin-right: 0.5rem; color: var(--color-text); }
 .variant .none { color: var(--color-text-muted); font-size: 0.9rem; }
 .variant small { font-family: var(--font-mono); font-size: 0.6rem; color: var(--color-text-muted); margin-right: 0.5rem; }
+.variants .current { margin: var(--space-xs) 0; font-size: 0.95rem; color: var(--color-text-muted); }
+.variants .current small { display: block; font-family: var(--font-mono); font-size: 0.6rem; letter-spacing: 0.06em; text-transform: uppercase; }
+p.en .target { background: color-mix(in srgb, var(--color-accent) 35%, transparent); }
 .variants .glossary { font-family: var(--font-mono); font-size: 0.65rem; color: var(--color-text-muted); margin-top: var(--space-xs); }
 .thinking { font-family: var(--font-mono); font-size: 0.65rem; color: var(--color-text-muted); }
 .thinking::after { content: " ·"; animation: blink 1s steps(2) infinite; }

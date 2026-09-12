@@ -441,16 +441,25 @@ def test_e2e(page, server_url):
     page.locator(".row").nth(0).locator("p.en .n").first.click()
     assert page.locator(".row").nth(0).locator("textarea.tr").is_visible()
     page.keyboard.press("Escape")
+    # re-translating sentence 1 while its English exists: the card shows the current rendering,
+    # highlights it, and a variant replaces exactly that sentence (a second pick replaces again)
+    page.locator(".row").nth(0).locator(".n").nth(0).click()
+    page.wait_for_selector(".variant")
+    assert page.locator(".variants .current").inner_text().endswith("B of On sidel u okna.")
+    assert page.locator(".row").nth(0).locator("p.en .target").count() > 0
+    page.locator(".variant[data-k=A]").click()
+    assert ta.input_value() == "A of On sidel u okna. (glossed) C of Zhizn proshla!"
+    page.locator(".variant[data-k=B]").click()
+    assert ta.input_value() == "B of On sidel u okna. C of Zhizn proshla!"
+    # an explicit selection still wins over the positional target
     _edit(page, 0)
-    ta.evaluate("t => t.setSelectionRange(0, 21)")  # "B of On sidel u okna."
+    ta.evaluate("t => t.setSelectionRange(22, 41)")  # "C of Zhizn proshla!"
     page.locator(".row").nth(0).locator(".n").nth(0).click()
     page.wait_for_selector(".variant")
     page.locator(".variant[data-k=A]").click()
-    assert ta.input_value() == "A of On sidel u okna. (glossed) C of Zhizn proshla!"
-    page.locator(".variant[data-k=B]").click()  # continues right after the previous insert
-    assert (
-        ta.input_value()
-        == "A of On sidel u okna. (glossed) B of On sidel u okna. C of Zhizn proshla!"
+    assert ta.input_value() == "B of On sidel u okna. A of On sidel u okna. (glossed)"
+    ta.evaluate(
+        "t => { t.value = 'A of On sidel u okna. (glossed) C of Zhizn proshla!'; t.dispatchEvent(new Event('input', {bubbles: true})); }"
     )
     # no space is forced before punctuation when a replaced selection ends at a comma
     ta.evaluate(
@@ -670,11 +679,19 @@ def test_e2e(page, server_url):
         assert page.locator("#pop h4").inner_text() == "casement"
         page.locator("#pop .alts .syn", has_text="bold casement").click()
         assert ta2.input_value() == "the bold casement."
-        # the chip replacement must not leave a selection armed: the next variant appends
+        # the chip replacement must not leave a selection armed: the next variant lands by position,
+        # i.e. it replaces the English sentence standing where the Russian one is
         page.locator(".row").nth(2).locator(".n").first.click()
         page.wait_for_selector(".row:nth-child(3) .variant")
+        assert (
+            page.locator(".row")
+            .nth(2)
+            .locator(".variants .current")
+            .inner_text()
+            .endswith("the bold casement.")
+        )
         page.locator(".row").nth(2).locator(".variant[data-k=A]").click()
-        assert ta2.input_value() == "the bold casement. A of Konets."
+        assert ta2.input_value() == "A of Konets."
         # a voice with no usable output is shown as such and cannot insert (or delete) anything
         c = page.locator(".row").nth(2).locator(".variant[data-k=C]")
         assert "no usable output" in c.inner_text() and c.is_disabled()

@@ -292,10 +292,14 @@ def s_translate(pg):
     assert not any(any("Ѐ" <= ch <= "ӿ" for ch in t[4:]) for t in texts), (
         "cyrillic leaked into a variant"
     )
+    assert r1.locator(".variants .current").is_visible()  # sentence 1 already has English
+    n_before = r1.locator("p.en .n").count()
     r1.locator(".variant[data-k=B]").click()
     saved(pg)
     after = ta.input_value()
-    assert after.startswith(before.rstrip()) and len(after) > len(before)
+    assert (
+        after != before and r1.locator("p.en .n").count() == n_before
+    )  # replaced in place, not appended
     r1.locator(".variants .close").click()
     assert r1.locator(".variants").is_hidden()
     # restore

@@ -277,16 +277,21 @@
     const prev_ru = j > 0 ? sents[j - 1] : (i > 0 ? work.sentences[i - 1].slice(-1)[0] || '' : '');
     // "English so far": the sentences already rendered before this one (by position), else the
     // tail of the previous paragraph's English
-    const enSents = t => t.trim().split(/(?<=[.!?…]["”»)]*)\s+/).filter(Boolean);
+    const enSents = t => enSpans(t).map(x => x.s);
     const prev_en = (j > 0 ? enSents($('textarea.tr', row).value).slice(0, j)
       : (i > 0 ? enSents(grid.querySelectorAll('textarea.tr')[i - 1].value) : [])).slice(-2).join(' ');
+    // variants for Russian sentence j target English sentence j (replace), else the slot after j-1
+    const spans = enSpans($('textarea.tr', row).value), target = spans[j] || null;
+    const slot = target ? null : (spans[j - 1] ? spans[j - 1].b : null);
+    highlightTarget(row, target);
     const next_ru = sents[j + 1] || '';
     box.hidden = false;
     box.innerHTML = `<header><span>${esc(sent.querySelector('.n').textContent)} ·</span>
         <input class="guidance" placeholder="guidance, e.g. more archaic" value="${esc(guidance)}">
-        <button type="button" class="again">again</button><button type="button" class="close">close</button></header>
+        <button type="button" class="again">again</button><button type="button" class="close">close</button></header>` +
+      (target ? `<p class="current"><small>current · a variant replaces it</small>${esc(target.s)}</p>` : '') + `
       <p class="thinking">translating with ${esc(modelSel.value)}</p>`;
-    $('.close', box).onclick = () => { box.hidden = true; sent.classList.remove('active'); row.classList.remove('active'); };
+    $('.close', box).onclick = () => { box.hidden = true; sent.classList.remove('active'); row.classList.remove('active'); highlightTarget(row, null); };
     $('.again', box).onclick = () => translateSentence(sent, $('.guidance', box).value);
     $('.guidance', box).onkeydown = ev => { if (ev.key === 'Enter') translateSentence(sent, ev.target.value); };
     const v = currentVoice();
@@ -302,22 +307,44 @@
         (out.glossary.length || out.rejected.length ? `<p class="glossary">${
           out.glossary.map(g => `${esc(g.ru)} → ${esc(g.en)}`).join(' · ')}${
           out.rejected.map(r => ` · not “${esc(r.en)}”`).join('')}</p>` : '');
-      box.querySelectorAll('.variant').forEach(b => { if (out[b.dataset.k]) b.onclick = () => insert(row, out[b.dataset.k]); else b.disabled = true; });
+      box.querySelectorAll('.variant').forEach(b => { if (out[b.dataset.k]) b.onclick = () => insert(row, out[b.dataset.k], target, slot); else b.disabled = true; });
     } catch (e) { if (e.name !== 'AbortError') $('.thinking', box).outerHTML = `<p class="clean">${esc(e.message)}</p>`; }
   }
 
   /* Insert a variant or dictionary chip where the translator last was: over the selection they
      made, at the caret they left, or appended when the paragraph was never entered. */
-  function insert(row, text) {
+  /* English sentences with their offsets, split the same way the numbers are. */
+  function enSpans(v) {
+    const out = []; let last = 0;
+    for (const m of [...v.matchAll(EN_BOUND), null]) {
+      const end = m ? m.index + m[1].length : v.length;
+      const s = v.slice(last, end), lead = s.length - s.trimStart().length;
+      if (s.trim()) out.push({ s: s.trim(), a: last + lead, b: last + lead + s.trim().length });
+      if (m) last = m.index + m[0].length;
+    }
+    return out;
+  }
+  function highlightTarget(row, target) {
+    row.querySelectorAll('p.en [data-a]').forEach(el => el.classList.toggle('target', !!target && +el.dataset.a >= target.a && +el.dataset.a < target.b));
+  }
+
+  /* Where a variant goes: over a selection you made; else over the English sentence in the same
+     position as the Russian one (the "current" shown in the card); else into the slot after the
+     previous English sentence; else at a caret you left; else appended. */
+  function insert(row, text, target = null, slot = null) {
     const ta = $('textarea.tr', row), v = ta.value;
-    const sel = ta.sel && ta.sel[1] <= v.length ? ta.sel : null;
+    const explicit = ta.sel && ta.sel[0] !== ta.sel[1] && ta.sel[1] <= v.length ? ta.sel : null;
+    const spot = explicit || (target && target.b <= v.length && v.slice(target.a, target.b) === target.s ? [target.a, target.b]
+      : slot !== null && slot <= v.length ? [slot, slot] : ta.sel && ta.sel[1] <= v.length ? ta.sel : null);
     ta.sel = null;
-    if (sel) {
-      const [a, b] = sel;
+    if (spot) {
+      const [a, b] = spot;
       const before = a > 0 && !/[\s(«“"'\[]/.test(v[a - 1]) ? ' ' : '';
       const after = b < v.length && !/[\s,.;:!?…)»”"'\]]/.test(v[b]) ? ' ' : '';
       ta.setRangeText(before + text + after, a, b, 'end');
-      ta.sel = [ta.selectionEnd, ta.selectionEnd];  // a second variant continues from here
+      if (target) { target.s = text; target.b = target.a + before.length + text.length; target.a += before.length; }  // another pick replaces this one
+      else ta.sel = [ta.selectionEnd, ta.selectionEnd];  // a second variant continues from here
+      highlightTarget(row, target);
     } else {
       const cur = v.replace(/\s+$/, '');
       ta.value = cur ? cur + ' ' + text : text;
