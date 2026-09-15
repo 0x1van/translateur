@@ -1,15 +1,33 @@
-# translator
+# translateur
 
-Two-pane Russian → English workbench over a local Ollama. Paragraph-aligned `source.md` +
-`translation.md` per work (the website's `/parallel/` model), so a finished work drops into a
-bilingual post pair.
+Two-pane Russian → English translation workbench. Any OpenAI-compatible model endpoint
+(OpenRouter when hosted, Ollama at home); offline dictionaries (WikDict, WordNet, Moby); every
+save a git commit.
+
+## Run
 
 ```bash
-cd tools/translator
 uv sync --all-groups
-uv run python fetch_data.py        # once: WikDict ru-en + en-ru (38 MB), Moby (25 MB), Open English WordNet (13 MB → 124 MB db)
-uv run uvicorn app:app --reload --port 8765   # http://127.0.0.1:8765 (8000 is the website)
+uv run python fetch_data.py                   # once: WikDict ru-en + en-ru (38 MB), Moby (25 MB), Open English WordNet
+cp .env.example .env                          # model endpoint, models, store, optional password
+set -a; source .env; set +a
+uv run uvicorn app:app --reload --port 8765   # http://127.0.0.1:8765
 ```
+
+Data lives in one `store/` directory (`STORE_DIR`): `works/<slug>/{source.md,translation.md}`
+paragraph-aligned, and `projects/<name>/translation/{config.md,glossary.yaml,about.md}`. The
+store is its own git repository — one commit per save — so back it up by pushing it somewhere.
+
+## Deploy
+
+`Dockerfile` bakes the dictionaries into the image; the store is a volume at `/store`. CI publishes
+`ghcr.io/0x1van/translateur:latest` on every push to `main`. Run that image wherever you like; the
+author's deployment (compose, reverse proxy, backups) lives in a private infrastructure repo.
+
+There is no login. Put an access layer in front (Cloudflare Access, a VPN, the LAN). `APP_PASSWORD`
+adds HTTP basic auth as a fallback.
+
+## Using it
 
 - **new** — slug, project, optional title; then paste the Russian into the left pane. Blank
   lines separate paragraphs. The Russian stays editable: click past the words, retype or paste,
@@ -24,8 +42,8 @@ uv run uvicorn app:app --reload --port 8765   # http://127.0.0.1:8765 (8000 is t
 - **works & projects** — a work is `works/<slug>/source.md` + `translation.md`. `source.md` may
   open with front matter `project:` (a preset name) and `title:`; the tree groups works by project
   and opening one selects its preset. Bulk import example:
-  `projects/posts-from-underground/scripts/import_translator.py` (one work per chapter, published
-  English aligned to the Russian paragraphs).
+  nova-nevedoma's `projects/posts-from-underground/scripts/import_translator.py` (one work per
+  chapter, published English aligned to the Russian paragraphs), run with `WORKS_DIR` pointing here.
 - **about project** — a few sentences in your own words about the text and how it should read,
   saved as `projects/<name>/translation/about.md` (seeded from the project's config the first
   time). The app writes the actual prompt around it: role, rules, output format and the three
@@ -33,8 +51,7 @@ uv run uvicorn app:app --reload --port 8765   # http://127.0.0.1:8765 (8000 is t
   `glossary.yaml` terms and rejected terms are injected per sentence. The per-voice freedom
   (temperature) is kept per browser.
 
-Env: `OLLAMA_URL` (default `http://localhost:11434`), `WORKS_DIR`, `PROJECTS_DIR`.
 
 Tests: `uv run python -m playwright install chromium chromium-headless-shell` once, then
-`uv run pytest`. The e2e test runs against a fake Ollama. `uv run python qa_live.py` is the slow
+`uv run pytest`. The e2e test runs against a fake model endpoint. `uv run python qa_live.py` is the slow
 end-to-end sweep against the real model (32 scenarios, own servers, throwaway copy of works/).

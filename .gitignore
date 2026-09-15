@@ -1,4 +1,5 @@
+store
 data
-works
 .venv/
 __pycache__/
+.env

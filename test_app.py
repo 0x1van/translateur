@@ -43,11 +43,12 @@ class FakeOllama(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
-        self._send({"models": [{"name": "fake-9b"}, {"name": "fake-2b"}]})
+        self._send({"data": [{"id": "fake-9b"}, {"id": "fake-2b"}]})
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-        assert 0 < body["options"]["num_predict"] < 5000  # every call carries a hard output cap
+        assert 0 < body["max_tokens"] < 5000  # every call carries a hard output cap
+        assert body["response_format"]["json_schema"]["schema"]["additionalProperties"] is False
         system = body["messages"][0]["content"]
         user = body["messages"][1]["content"]
         if "copy editor" in system:
@@ -69,19 +70,23 @@ class FakeOllama(BaseHTTPRequestHandler):
             if k == "A" and "English so far" in user:
                 prev = user.split("(continue its voice): ", 1)[1].split("\n", 1)[0]
                 tag += f" [prev: {prev[-12:]}]"
-            if (
-                body["options"]["temperature"] >= 1.0 and "Жизнь" in sent
-            ):  # a hot sample cut mid-loop
-                self._send({"message": {"content": '{"text": "Life passed passed passed pas'}})
+            if body["temperature"] >= 1.0 and "Жизнь" in sent:  # a hot sample cut mid-loop
+                self._send(
+                    {
+                        "choices": [
+                            {"message": {"content": '{"text": "Life passed passed passed pas'}}
+                        ]
+                    }
+                )
                 return
             if k == "C" and "Конец" in sent:  # a voice that never yields usable JSON
-                self._send({"message": {"content": "nope"}})
+                self._send({"choices": [{"message": {"content": "nope"}}]})
                 return
-            if body["options"]["temperature"] >= 1.0:  # a hot model echoing the source
+            if body["temperature"] >= 1.0:  # a hot model echoing the source
                 out = {"text": sent}
             else:
                 out = {"text": f"{k} of {translit(sent)}{tag}"}
-        self._send({"message": {"content": json.dumps(out)}})
+        self._send({"choices": [{"message": {"content": json.dumps(out)}}]})
 
     def _send(self, obj):
         data = json.dumps(obj).encode()
@@ -102,8 +107,11 @@ OLLAMA_PORT = _free_port()
 _fake = HTTPServer(("127.0.0.1", OLLAMA_PORT), FakeOllama)
 threading.Thread(target=_fake.serve_forever, daemon=True).start()
 
-WORKS = Path(tempfile.mkdtemp())
-PROJECTS = Path(tempfile.mkdtemp())
+STORE = Path(tempfile.mkdtemp())  # works + projects side by side, as in a real store
+WORKS = STORE / "works"
+PROJECTS = STORE / "projects"
+WORKS.mkdir()
+PROJECTS.mkdir()
 (PROJECTS / "demo" / "translation").mkdir(parents=True)
 (PROJECTS / "demo" / "translation" / "config.md").write_text(
     "# Demo\n\n## Translation philosophy\nFaithful.\n\n## Variant scheme\n"
@@ -121,7 +129,10 @@ PROJECTS = Path(tempfile.mkdtemp())
     "  - term: advantage\n    for_russian: выгода\n    use_instead: context-dependent\n"
 )
 os.environ.update(
-    WORKS_DIR=str(WORKS), PROJECTS_DIR=str(PROJECTS), OLLAMA_URL=f"http://127.0.0.1:{OLLAMA_PORT}"
+    STORE_DIR=str(WORKS.parent),
+    WORKS_DIR=str(WORKS),
+    PROJECTS_DIR=str(PROJECTS),
+    LLM_BASE_URL=f"http://127.0.0.1:{OLLAMA_PORT}",
 )
 
 import app as appmod
@@ -184,8 +195,8 @@ def test_saves_are_git_commits():
     appmod.patch_work("gitty", appmod.PatchWork(blocks={0: "one"}))
     appmod.patch_work("gitty", appmod.PatchWork(blocks={1: "two"}))
     log = subprocess.run(
-        ["git", "log", "--format=%s", "--", "gitty"],
-        cwd=WORKS,
+        ["git", "log", "--format=%s", "--", "works/gitty"],
+        cwd=STORE,
         capture_output=True,
         text=True,
         check=False,

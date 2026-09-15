@@ -1,7 +1,9 @@
-"""Two-pane Russian→English translation workbench over a local Ollama.
+"""translateur — a two-pane Russian→English translation workbench.
 
-A *work* is a directory with `source.md` (Russian) and `translation.md` (English), paragraph
-blocks paired by index — the same model as the website's /parallel/ view.
+Models: any OpenAI-compatible chat endpoint (OpenRouter hosted, Ollama at home). Data: one
+`store/` directory — `works/<slug>/{source.md,translation.md}` (paragraph blocks paired by
+index) and `projects/<name>/translation/{config.md,glossary.yaml,about.md}` — versioned as its
+own git repository, one commit per save.
 """
 
 import asyncio
@@ -24,9 +26,15 @@ from pydantic import BaseModel
 import lexicon
 
 HERE = Path(__file__).parent
-WORKS_DIR = Path(os.environ.get("WORKS_DIR", HERE / "works"))
-PROJECTS_DIR = Path(os.environ.get("PROJECTS_DIR", HERE.parent.parent / "projects"))
-OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434").rstrip("/")
+STORE_DIR = Path(os.environ.get("STORE_DIR", HERE / "store"))  # works + projects, one git repo
+WORKS_DIR = Path(os.environ.get("WORKS_DIR", STORE_DIR / "works"))
+PROJECTS_DIR = Path(os.environ.get("PROJECTS_DIR", STORE_DIR / "projects"))
+# OpenAI-compatible chat endpoint: OpenRouter when hosted, Ollama's /v1 at home
+LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "http://localhost:11434/v1").rstrip("/")
+LLM_API_KEY = os.environ.get("LLM_API_KEY", "")
+LLM_MODELS = [m.strip() for m in os.environ.get("LLM_MODELS", "").split(",") if m.strip()]
+LLM_EXTRA = json.loads(os.environ.get("LLM_EXTRA_JSON", "{}"))  # e.g. {"provider": {"zdr": true}}
+APP_PASSWORD = os.environ.get("APP_PASSWORD", "")  # optional HTTP basic auth; empty = open
 
 DEFAULT_VOICES = {
     "A": "Literal: closest to the Russian syntax and word order; may read slightly foreign.",
@@ -37,7 +45,7 @@ DEFAULT_FREEDOM = {"A": 0.3, "B": 0.7, "C": 1.0}  # sampling temperature per voi
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 _BOUNDARY_RE = re.compile(r'([.!?…]["»”)]*)\s+(?=[«"“(]?[A-ZА-ЯЁ]|[—–-]\s+[«"“(]?[A-ZА-ЯЁ])')
 
-app = FastAPI(title="translator")
+app = FastAPI(title="translateur")
 
 
 # ---------- text ----------
@@ -178,25 +186,29 @@ def _write_source(d: Path, meta: dict, blocks: list[str]) -> None:
 
 def _write_translation(d: Path, blocks: list[str]) -> None:
     _atomic_write(d / "translation.md", "\n\n".join(blocks) + "\n")
-    _git_commit(d.name, f"{d.name}: {sum(1 for b in blocks if b.strip())}/{len(blocks)}")
+    _git_commit(d, f"{d.name}: {sum(1 for b in blocks if b.strip())}/{len(blocks)}")
 
 
 def _git(*args: str) -> subprocess.CompletedProcess:
+    # explicit repo paths: git must never discover a repository above an un-initialised store
+    git = ["git", f"--git-dir={STORE_DIR / '.git'}", f"--work-tree={STORE_DIR}"]
     return subprocess.run(
-        ["git", *args], cwd=WORKS_DIR, capture_output=True, text=True, check=False
+        git + list(args), cwd=STORE_DIR, capture_output=True, text=True, check=False
     )
 
 
-def _git_commit(slug: str, message: str) -> None:
-    """works/ is its own git repository: every save is a commit, so any earlier state of a
-    translation can be recovered with plain git. Silent when git is missing or nothing changed."""
+def _git_commit(path: Path, message: str) -> None:
+    """The store is its own git repository: every save is a commit, so any earlier state of a
+    translation or a project note can be recovered with plain git. Silent when git is missing
+    or nothing changed."""
     # ponytail: one commit per save; squash with `git rebase` if the log ever gets in the way
     try:
-        if not (WORKS_DIR / ".git").exists():
+        if not (STORE_DIR / ".git").exists():
+            STORE_DIR.mkdir(parents=True, exist_ok=True)
             _git("init", "-q")
-            _git("config", "user.email", "translator@local")
-            _git("config", "user.name", "translator")
-        _git("add", "-A", slug)
+            _git("config", "user.email", "translateur@local")
+            _git("config", "user.name", "translateur")
+        _git("add", "-A", str(path))
         _git("commit", "-q", "-m", message)
     except OSError:
         pass
@@ -352,6 +364,7 @@ def save_about(name: str, body: About) -> dict:
     p = about_path(name)
     p.parent.mkdir(parents=True, exist_ok=True)
     _atomic_write(p, body.description.strip() + "\n")
+    _git_commit(p, f"{name}: about")
     return {"ok": True}
 
 
@@ -383,6 +396,7 @@ def create_project(body: NewProject) -> list[dict]:
     d.mkdir(parents=True, exist_ok=True)
     (d / "config.md").write_text(PROJECT_TEMPLATE.format(name=body.name))
     (d / "glossary.yaml").write_text("vocabulary: []\nrejected: []\n")
+    _git_commit(d, f"{body.name}: new project")
     load_presets.cache_clear()
     return get_presets()
 
@@ -417,53 +431,24 @@ def glossary_for(preset_name: str, sentence: str) -> tuple[list[dict], list[dict
     return ([g for g in p["glossary"] if hit(g["ru"])], [r for r in p["rejected"] if hit(r["ru"])])
 
 
-# ---------- ollama ----------
+# ---------- model calls (OpenAI-compatible chat completions) ----------
 
 
-VARIANT_SCHEMA = {
-    "type": "object",
-    "properties": {"text": {"type": "string"}},
-    "required": ["text"],
-}
-CHECK_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "corrected": {"type": "string"},
-        "notes": {"type": "array", "items": {"type": "string"}},
-    },
-    "required": ["corrected", "notes"],
-}
-
-
-async def ollama_json(
-    model: str, system: str, user: str, schema: dict, temperature: float, max_tokens: int
-) -> dict:
-    """One structured-output chat call. `max_tokens` is a hard stop: a hot sample that starts
-    looping would otherwise generate until the context fills, and Ollama serves one request at a
-    time per model, so every later request would queue behind it for minutes."""
-    payload = {
-        "options": {"temperature": temperature, "num_predict": max_tokens},
-        "model": model,
-        "stream": False,
-        "format": schema,  # structured output; small models ignore the plain "json" mode
-        "think": False,
-        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+def _schema(props: dict, required: list[str]) -> dict:
+    """Strict JSON schema, as OpenAI-style structured output wants it."""
+    return {
+        "type": "object",
+        "properties": props,
+        "required": required,
+        "additionalProperties": False,
     }
-    async with httpx.AsyncClient(timeout=300) as c:
-        try:
-            r = await c.post(f"{OLLAMA_URL}/api/chat", json=payload)
-            if r.status_code == 400 and "think" in r.text:  # model has no thinking switch
-                payload.pop("think")
-                r = await c.post(f"{OLLAMA_URL}/api/chat", json=payload)
-            r.raise_for_status()
-        except httpx.HTTPError as e:
-            raise HTTPException(502, f"ollama: {e}") from e
-    content = r.json().get("message", {}).get("content", "")
-    try:
-        m = re.search(r"\{.*\}", content, re.DOTALL)  # tolerate prose around the object
-        return json.loads(m.group(0) if m else content)
-    except ValueError as e:
-        raise BadOutput(502, f"ollama returned non-JSON: {e}") from e
+
+
+VARIANT_SCHEMA = _schema({"text": {"type": "string"}}, ["text"])
+CHECK_SCHEMA = _schema(
+    {"corrected": {"type": "string"}, "notes": {"type": "array", "items": {"type": "string"}}},
+    ["corrected", "notes"],
+)
 
 
 class BadOutput(HTTPException):
@@ -471,15 +456,58 @@ class BadOutput(HTTPException):
     and hit the output cap mid-string. Worth one more sample, not a failure of the whole request."""
 
 
+async def llm_json(
+    model: str, system: str, user: str, schema: dict, temperature: float, max_tokens: int
+) -> dict:
+    """One structured-output chat call. `max_tokens` is a hard stop: a hot sample that starts
+    looping would otherwise generate until the context fills (and, on a local Ollama, queue every
+    later request behind it). Thinking is switched off."""
+    payload = {
+        "model": model,
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {"name": "out", "strict": True, "schema": schema},
+        },
+        # OpenRouter and Ollama's /v1 both honour this; OpenRouter's own {"reasoning": {...}} form
+        # makes Ollama think anyway and burn the token cap, so it is not sent by default
+        "reasoning_effort": "none",
+        **LLM_EXTRA,
+    }
+    headers = {"Authorization": f"Bearer {LLM_API_KEY}"} if LLM_API_KEY else {}
+    async with httpx.AsyncClient(timeout=300) as c:
+        try:
+            r = await c.post(f"{LLM_BASE_URL}/chat/completions", json=payload, headers=headers)
+            r.raise_for_status()
+        except httpx.HTTPError as e:
+            raise HTTPException(502, f"model endpoint: {e}") from e
+    data = r.json()
+    if "error" in data:  # OpenRouter reports routing failures inside a 200
+        raise HTTPException(502, f"model endpoint: {data['error']}")
+    content = (data.get("choices") or [{}])[0].get("message", {}).get("content") or ""
+    try:
+        m = re.search(r"\{.*\}", content, re.DOTALL)  # tolerate prose around the object
+        return json.loads(m.group(0) if m else content)
+    except ValueError as e:
+        raise BadOutput(502, f"model returned non-JSON: {e}") from e
+
+
 @app.get("/api/models")
 async def models() -> list[str]:
+    """The curated LLM_MODELS list if set (OpenRouter has hundreds), else whatever the endpoint
+    lists (Ollama: the models installed)."""
+    if LLM_MODELS:
+        return LLM_MODELS
+    headers = {"Authorization": f"Bearer {LLM_API_KEY}"} if LLM_API_KEY else {}
     try:
         async with httpx.AsyncClient(timeout=5) as c:
-            r = await c.get(f"{OLLAMA_URL}/api/tags")
+            r = await c.get(f"{LLM_BASE_URL}/models", headers=headers)
             r.raise_for_status()
     except httpx.HTTPError as e:
-        raise HTTPException(502, f"ollama unreachable at {OLLAMA_URL}: {e}") from e
-    return [m["name"] for m in r.json().get("models", [])]
+        raise HTTPException(502, f"model endpoint unreachable at {LLM_BASE_URL}: {e}") from e
+    return [m["id"] for m in r.json().get("data", [])]
 
 
 class TranslateReq(BaseModel):
@@ -582,7 +610,7 @@ async def translate(req: TranslateReq) -> dict:
 
         async def sample(t: float) -> str:
             try:
-                out = await ollama_json(req.model, system, ask, VARIANT_SCHEMA, t, cap)
+                out = await llm_json(req.model, system, ask, VARIANT_SCHEMA, t, cap)
             except BadOutput:
                 return ""
             return str(out.get("text", "")).strip()
@@ -617,11 +645,9 @@ class AltReq(BaseModel):
     end: int  # span of the term inside `translation`
 
 
-ALT_SCHEMA = {
-    "type": "object",
-    "properties": {"alternatives": {"type": "array", "items": {"type": "string"}}},
-    "required": ["alternatives"],
-}
+ALT_SCHEMA = _schema(
+    {"alternatives": {"type": "array", "items": {"type": "string"}}}, ["alternatives"]
+)
 
 
 @app.post("/api/alternatives")
@@ -651,7 +677,7 @@ async def alternatives(req: AltReq) -> dict:
         f"ENGLISH DRAFT:\n{t[: req.start]}[[{term}]]{t[req.end :]}\n\n"
         f"Alternatives for [[{term}]]:"
     )
-    out = await ollama_json(req.model, system, user, ALT_SCHEMA, 1.0, 160 + 8 * len(term))
+    out = await llm_json(req.model, system, user, ALT_SCHEMA, 1.0, 160 + 8 * len(term))
     seen = {term.strip().lower()}
     alts = []
     for a in out.get("alternatives", []):
@@ -712,7 +738,7 @@ async def check(req: CheckReq) -> dict:
     user = (
         f"RUSSIAN ORIGINAL (context only):\n{req.source}\n\n" if req.source else ""
     ) + f"ENGLISH TEXT TO CHECK:\n{req.text}"
-    out = await ollama_json(req.model, system, user, CHECK_SCHEMA, 0.2, 200 + len(req.text))
+    out = await llm_json(req.model, system, user, CHECK_SCHEMA, 0.2, 200 + len(req.text))
     corrected = str(out.get("corrected", req.text)).strip("\n") or req.text
     notes = [str(n) for n in out.get("notes", []) if n]
     return {"corrected": corrected, "issues": hunks(req.text, corrected), "notes": notes}
@@ -737,6 +763,28 @@ def thesaurus(word: str) -> dict:
 
 
 # ---------- ui ----------
+
+
+@app.middleware("http")
+async def basic_auth(request, call_next):
+    """Optional single shared password (APP_PASSWORD). The intended front door is a proper access
+    layer (Cloudflare Access, a VPN); this is the belt to that braces."""
+    if APP_PASSWORD:
+        import base64
+
+        auth = request.headers.get("authorization", "")
+        ok = (
+            auth.startswith("Basic ")
+            and base64.b64decode(auth[6:]).decode("utf-8", "replace").split(":", 1)[-1]
+            == APP_PASSWORD
+        )
+        if not ok:
+            return JSONResponse(
+                {"detail": "password required"},
+                status_code=401,
+                headers={"WWW-Authenticate": 'Basic realm="translateur"'},
+            )
+    return await call_next(request)
 
 
 @app.middleware("http")

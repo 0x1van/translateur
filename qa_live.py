@@ -560,7 +560,9 @@ def s_model(pg):
     pg.select_option("#model", next(o for o in opts if "9b" in o))
 
 
-@scenario("ollama down: app still loads, status shows the error, translate reports it inline")
+@scenario(
+    "model endpoint down: app still loads, status shows the error, translate reports it inline"
+)
 def s_no_ollama(pg):
     pg.goto(NOLLAMA + "/vanka")
     pg.wait_for_selector(".row")
@@ -568,7 +570,7 @@ def s_no_ollama(pg):
     assert "unreachable" in pg.locator("#status").text_content()
     row(pg, 0).locator(".n").first.click()
     pg.wait_for_selector(".variants .clean", timeout=15000)
-    assert "ollama" in row(pg, 0).locator(".variants .clean").inner_text()
+    assert "model endpoint" in row(pg, 0).locator(".variants .clean").inner_text()
     # dictionary still works without ollama
     row(pg, 0).locator(".cell.src .w").first.click()
     pg.wait_for_selector("#pop h4")
@@ -670,7 +672,13 @@ def _server(port: int, env: dict) -> subprocess.Popen:
     proc = subprocess.Popen(
         [sys.executable, "-m", "uvicorn", "app:app", "--port", str(port), "--log-level", "warning"],
         cwd=HERE,
-        env={**os.environ, "WORKS_DIR": str(WORKS), "PROJECTS_DIR": str(PROJECTS), **env},
+        env={
+            **os.environ,
+            "STORE_DIR": str(WORKS.parent),
+            "WORKS_DIR": str(WORKS),
+            "PROJECTS_DIR": str(PROJECTS),
+            **env,
+        },
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
@@ -691,19 +699,22 @@ def _free_port() -> int:
 def main():
     global BASE, NOLLAMA
     for slug in ("pfu-1-01", "pfu-1-02", "pfu-2-06", "vanka"):
-        if (HERE / "works" / slug).exists():
-            shutil.copytree(HERE / "works" / slug, WORKS / slug)
+        if (HERE / "store" / "works" / slug).exists():
+            shutil.copytree(HERE / "store" / "works" / slug, WORKS / slug)
     missing = [w for w in ("pfu-1-01", "pfu-1-02", "pfu-2-06", "vanka") if not (WORKS / w).exists()]
     if missing:
         sys.exit(
             f"needs these works present locally: {missing} (run the PfU importer; vanka is any loose work)"
         )
     # the real projects' translation configs, copied: the sweep writes about.md and new projects
-    for cfg in (HERE.parent.parent / "projects").glob("*/translation/config.md"):
+    for cfg in (HERE / "store" / "projects").glob("*/translation/config.md"):
         shutil.copytree(cfg.parent, PROJECTS / cfg.parent.parent.name / "translation")
     p1, p2 = _free_port(), _free_port()
     BASE, NOLLAMA = f"http://127.0.0.1:{p1}", f"http://127.0.0.1:{p2}"
-    servers = [_server(p1, {}), _server(p2, {"OLLAMA_URL": "http://127.0.0.1:1"})]
+    servers = [
+        _server(p1, {}),
+        _server(p2, {"LLM_BASE_URL": "http://127.0.0.1:1/v1", "LLM_MODELS": ""}),
+    ]
     try:
         _run()
     finally:
