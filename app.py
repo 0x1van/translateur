@@ -8,6 +8,7 @@ one commit per save.
 """
 
 import asyncio
+import contextvars
 import difflib
 import io
 import json
@@ -44,6 +45,8 @@ LLM_API_KEY = os.environ.get("LLM_API_KEY", "")
 LLM_MODELS = [m.strip() for m in os.environ.get("LLM_MODELS", "").split(",") if m.strip()]
 LLM_EXTRA = json.loads(os.environ.get("LLM_EXTRA_JSON", "{}"))  # e.g. {"provider": {"zdr": true}}
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "")  # optional HTTP basic auth; empty = open
+# ponytail: fixed rate; a live FX lookup when pennies of drift matter
+GBP_PER_USD = float(os.environ.get("GBP_PER_USD", "0.74"))
 
 DEFAULT_VOICES = {
     "A": "Literal: closest to the Russian syntax and word order; may read slightly foreign.",
@@ -112,11 +115,31 @@ def load_work(slug: str) -> dict:
         "slug": slug,
         "project": project,
         "title": meta.get("title", ""),
+        "cost": round(_cost_usd(d) * GBP_PER_USD, 4),  # £, what the model endpoint has billed so far
         "source": src,
         "sentences": [split_sentences(b) for b in src],
         "translation": tr,
         "misses": [block_misses(project or "plain", s, t) for s, t in zip(src, tr)],
     }
+
+
+def _cost_usd(d: Path) -> float:
+    f = d / "cost"
+    return float(f.read_text() or 0) if f.exists() else 0.0
+
+
+_COST_SLUG: contextvars.ContextVar[str] = contextvars.ContextVar("cost_slug", default="")
+
+
+def _add_cost(usd: float) -> None:
+    """Add one call's bill (OpenRouter's `usage.cost`, dollars) to the open work's `cost` file.
+    Nothing to add to when the call came from the evals, or the endpoint does not price."""
+    slug = _COST_SLUG.get()
+    if not usd or not slug or not (work_dir(slug) / "source.md").exists():
+        return
+    d = work_dir(slug)
+    with _WRITE_LOCK:
+        (d / "cost").write_text(repr(_cost_usd(d) + usd))
 
 
 def block_misses(preset: str, source: str, text: str) -> list[dict]:
@@ -155,6 +178,7 @@ def list_works() -> list[dict]:
                 "slug": w["slug"],
                 "project": w["project"],
                 "title": w["title"],
+                "cost": w["cost"],
                 "done": sum(1 for b in w["translation"] if b.strip()),  # paragraphs with English
                 "total": len(w["source"]),
             }
@@ -956,6 +980,7 @@ async def llm_json(
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
         "temperature": temperature,
         "max_tokens": max_tokens,
+        "usage": {"include": True},  # OpenRouter then reports the call's cost; others ignore it
         **(
             {"response_format": {"type": "json_schema", "json_schema": {"name": "out", "strict": True, "schema": schema}}}
             if schema
@@ -989,6 +1014,7 @@ async def llm_json(
         print(json.dumps(data.get("choices"), ensure_ascii=False)[:600], file=sys.stderr)
     if "error" in data:  # OpenRouter reports routing failures inside a 200
         raise HTTPException(502, f"model endpoint: {data['error']}")
+    _add_cost(float((data.get("usage") or {}).get("cost") or 0))
     content = (data.get("choices") or [{}])[0].get("message", {}).get("content") or ""
     if schema is None:  # free text: the reply is the answer, minus a pair of quotes around it all
         t = content.strip()
@@ -1071,6 +1097,7 @@ def examples_for(sentence: str, n: int = 3, floor: float = 0.4) -> list[dict]:
 
 class TranslateReq(BaseModel):
     model: str
+    slug: str = ""  # the work the call is billed to
     preset: str = "plain"
     freedom: dict[str, float] = DEFAULT_FREEDOM
     description: str = ""  # the project in the translator's own words; the app writes the rest
@@ -1144,6 +1171,7 @@ def badness(text: str, source: str, rejected: list[str] = (), glossary: list[dic
 async def translate(req: TranslateReq) -> dict:
     """One model call per voice, in parallel, each at its own temperature; the system prompt is
     the same for all three, the user message names the voice."""
+    _COST_SLUG.set(req.slug)
     block = style_block(req.preset, req.sentence)
     glossary, rejected = block["glossary"], block["rejected"]
     banned = [r["en"] for r in rejected]
@@ -1219,6 +1247,7 @@ async def translate(req: TranslateReq) -> dict:
 
 class AltReq(BaseModel):
     model: str
+    slug: str = ""
     preset: str = "plain"
     description: str = ""
     sentence: str  # the Russian block the draft renders
@@ -1235,6 +1264,7 @@ ALT_SCHEMA = _schema(
 @app.post("/api/alternatives")
 async def alternatives(req: AltReq) -> dict:
     """DeepL-style: alternative renderings for one span of the draft, sampled wild."""
+    _COST_SLUG.set(req.slug)
     t = req.translation
     term = t[req.start : req.end]
     if not term.strip():
@@ -1272,6 +1302,7 @@ async def alternatives(req: AltReq) -> dict:
 
 class CheckReq(BaseModel):
     model: str
+    slug: str = ""
     text: str
     source: str = ""  # the Russian paragraph
     preset: str = ""  # for the glossary, edit mode only
@@ -1348,6 +1379,7 @@ async def check(req: CheckReq) -> dict:
     """One model pass over an English paragraph. grammar: mechanical fixes, the Russian as context.
     edit: an editor's changes against the Russian, as hunks to accept one by one. notes: an
     informant's observations, no text returned."""
+    _COST_SLUG.set(req.slug)
     system = REVIEW[req.mode]
     block = style_block(req.preset, req.source)
     if req.mode == "grammar":  # its brief is not to touch style: the conventions line alone

@@ -67,6 +67,7 @@
      browser), each with its progress — paragraphs that have English out of all paragraphs. */
   const openGroups = () => new Set(JSON.parse(localStorage.getItem('tree:open') || '[]'));
   const prog = (done, total) => `<span class="prog" title="${done} of ${total} paragraphs have English"><i style="--p:${total ? done / total * 100 : 0}%"></i>${done}/${total}</span>`;
+  const gbp = c => `<span class="cost" title="model cost so far">${c >= 0.01 ? '£' + c.toFixed(2) : c > 0 ? '<1p' : ''}</span>`;
   function fillProjectSelect() {
     presetSel.innerHTML = presets.map(p => `<option>${esc(p.name)}</option>`).join('');
     $('#new-form select[name=project]').innerHTML = presets.map(p => `<option>${esc(p.name)}</option>`).join('') + '<option value="__new">new project…</option>';
@@ -75,11 +76,11 @@
     const works = await api('/api/works'), groups = {}, open = openGroups();
     presets.forEach(p => (groups[p.name] = []));  // the same projects, in the same order, as the dropdown
     works.forEach(w => (groups[w.project || 'plain'] ||= []).push(w));  // loose works sit under "plain"
-    const item = w => `<li><a class="work-item${w.slug === work?.slug ? ' active' : ''}" href="/${esc(w.slug)}" data-slug="${esc(w.slug)}" title="${esc(w.slug)}"><span class="t">${esc(w.title || w.slug)}</span>${prog(w.done, w.total)}</a></li>`;
+    const item = w => `<li><a class="work-item${w.slug === work?.slug ? ' active' : ''}" href="/${esc(w.slug)}" data-slug="${esc(w.slug)}" title="${esc(w.slug)}"><span class="t">${esc(w.title || w.slug)}</span>${gbp(w.cost)}${prog(w.done, w.total)}</a></li>`;
     worksList.innerHTML = Object.entries(groups).map(([p, ws]) => {
-      const done = ws.reduce((n, w) => n + w.done, 0), total = ws.reduce((n, w) => n + w.total, 0);
+      const done = ws.reduce((n, w) => n + w.done, 0), total = ws.reduce((n, w) => n + w.total, 0), cost = ws.reduce((n, w) => n + w.cost, 0);
       return `<li><details class="proj" data-project="${esc(p)}"${open.has(p) || p === (work?.project || 'plain') ? ' open' : ''}>
-        <summary><span class="t">${esc(p)}</span>${ws.length ? prog(done, total) : ''}<button type="button" class="add" title="new work in ${esc(p)}">+</button></summary>
+        <summary><span class="t">${esc(p)}</span>${gbp(cost)}${ws.length ? prog(done, total) : ''}<button type="button" class="add" title="new work in ${esc(p)}">+</button></summary>
         <ul>${ws.map(item).join('') || '<li class="clean">nothing yet ·</li>'}</ul></details></li>`;
     }).join('');
   }
@@ -345,8 +346,9 @@
     const ctl = box.ctl = new AbortController();
     try {
       const out = await api('/api/translate', { method: 'POST', signal: ctl.signal, body: {
-        model: modelSel.value, preset: v.name, description: v.description, freedom,
+        slug: work.slug, model: modelSel.value, preset: v.name, description: v.description, freedom,
         sentence: sents[j], para_ru: sents.join(' '), para_en, guidance } });
+      refreshWorks().catch(() => {});  // the sidebar's £ moves with the bill
       for (const k of 'ABC') out[k] = toUK(out[k]);
       // shuffled per card: a pick then says which voice won, not which button was leftmost.
       // draft-blind: A alone first, B and C behind a button; the pick logs what was on screen
@@ -416,7 +418,8 @@
     out.dataset.mode = mode;
     try {
       const res = await api('/api/check', { method: 'POST', body: {
-        model: modelSel.value, text: ta.value, source: work.source[+row.dataset.i], preset: presetSel.value, mode } });
+        slug: work.slug, model: modelSel.value, text: ta.value, source: work.source[+row.dataset.i], preset: presetSel.value, mode } });
+      refreshWorks().catch(() => {});
       const issues = res.issues || [], notes = res.notes || [];
       if (mode === 'edit' && issues.length) logHunks(row, issues.map(i => ({ quote: i.quote, fix: i.fix })), false);
       out.innerHTML = issues.length
@@ -545,8 +548,9 @@
     const ctl = altCtl = new AbortController(), vc = currentVoice();
     try {
       const r = await api('/api/alternatives', { method: 'POST', signal: ctl.signal, body: {
-        model: modelSel.value, preset: vc.name, description: vc.description,
+        slug: work.slug, model: modelSel.value, preset: vc.name, description: vc.description,
         sentence: work.source[+ta.closest('.row').dataset.i], translation: v, start: a, end: b } });
+      refreshWorks().catch(() => {});
       alts.innerHTML = r.alternatives.length ? chips(r.alternatives.map(toUK)) : '<p class="none">none ·</p>';
     } catch (err) { if (err.name !== 'AbortError') alts.innerHTML = `<p class="none">${esc(err.message)}</p>`; }
   }

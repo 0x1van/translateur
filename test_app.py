@@ -104,7 +104,7 @@ class FakeOllama(BaseHTTPRequestHandler):
             if "response_format" not in body:  # free text, wrapped in the quotes models like to add
                 self._send({"choices": [{"message": {"content": f'"{out["text"]}"'}}]})
                 return
-        self._send({"choices": [{"message": {"content": json.dumps(out)}}]})
+        self._send({"choices": [{"message": {"content": json.dumps(out)}}], "usage": {"cost": 0.001}})
 
     def _send(self, obj, status=200):
         data = json.dumps(obj).encode()
@@ -374,6 +374,17 @@ def test_patch_source_splits_and_realigns():
         "",
         "two",
     ]  # emptied, not removed
+
+
+def test_cost_is_billed_to_the_work():
+    d = WORKS / "billed"
+    d.mkdir()
+    (d / "source.md").write_text("Раз.\n")
+    asyncio.run(appmod.translate(appmod.TranslateReq(slug="billed", model="fake-9b", sentence="Раз.")))
+    assert (d / "cost").read_text() == "0.004"  # three voices plus C's retry, a tenth of a cent each
+    assert appmod.load_work("billed")["cost"] == round(0.004 * appmod.GBP_PER_USD, 4)
+    asyncio.run(appmod.translate(appmod.TranslateReq(model="fake-9b", sentence="Раз.")))  # no slug: an eval
+    assert (d / "cost").read_text() == "0.004"
 
 
 def test_patch_blocks():

@@ -130,6 +130,7 @@ textarea.tr::placeholder { color: var(--color-border); font-style: italic; }
 .cell.src p.ru .ph, .cell.tr p.en .ph { color: var(--color-text-muted); font-style: italic; }
 textarea.src { width: 100%; border: 0; border-bottom: 1px dotted var(--color-accent-dim); background: transparent; resize: none; overflow: hidden; line-height: 1.7; min-height: 2.2rem; }
 textarea.src:focus { outline: none; }
+.tree .cost { font-size: 0.6rem; color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
 .tree summary .prog i { display: none; }  /* the group line keeps the numbers; the bar is per work */
 .tree summary .add { border: 0; padding: 0 0.3rem; font-size: 0.75rem; color: var(--color-text-muted); }
 .tree summary .add:hover { box-shadow: none; color: var(--color-text); }
