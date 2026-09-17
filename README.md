@@ -15,8 +15,9 @@ uv run uvicorn app:app --reload --port 8765   # http://127.0.0.1:8765
 ```
 
 Data lives in one `store/` directory (`STORE_DIR`): `works/<slug>/{source.md,translation.md}`
-paragraph-aligned, and `projects/<name>/translation/{config.md,glossary.yaml,about.md}`. The
-store is its own git repository — one commit per save — so back it up by pushing it somewhere.
+paragraph-aligned, `projects/<name>/translation/{config.md,glossary.yaml,about.md}`, and
+`picks.jsonl` — one line per variant you clicked, with the two you passed over, for later
+analysis. The store is its own git repository — one commit per save — so back it up by pushing it somewhere.
 
 ## Deploy
 
@@ -26,6 +27,9 @@ author's deployment (compose, reverse proxy, backups) lives in a private infrast
 
 There is no login. Put an access layer in front (Cloudflare Access, a VPN, the LAN). `APP_PASSWORD`
 adds HTTP basic auth as a fallback.
+
+On an iPad, open the site in Safari and use Share → Add to Home Screen; it runs as a standalone
+app (web manifest + touch icon, no service worker: the server does the work, nothing runs offline).
 
 ## Using it
 

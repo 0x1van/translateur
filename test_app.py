@@ -204,6 +204,32 @@ def test_saves_are_git_commits():
     assert log[:4] == ["gitty:", "2/2", "gitty:", "1/2"], log
 
 
+def test_picks_are_logged_and_committed():
+    import subprocess
+
+    pick = appmod.Pick(
+        slug="w",
+        i=0,
+        j=1,
+        model="m",
+        preset="plain",
+        sentence="Да.",
+        variants={"A": "Yes.", "B": "Yea.", "C": "Aye."},
+        chosen="B",
+    )
+    appmod.log_pick(pick)
+    line = json.loads((STORE / "picks.jsonl").read_text().splitlines()[-1])
+    assert line["chosen"] == "B" and line["variants"]["C"] == "Aye." and line["at"] > 0
+    log = subprocess.run(
+        ["git", "log", "-1", "--format=%s", "--", "picks.jsonl"],
+        cwd=STORE,
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.strip()
+    assert log == "pick: w 0.1 B", log
+
+
 def test_patch_source_splits_and_realigns():
     d = WORKS / "srcy"
     d.mkdir()
@@ -342,6 +368,17 @@ def test_lexicon():
     assert any("pal" in x["synonyms"] for x in appmod.lexicon.senses("chums"))  # wordnet, by sense
     assert all(x["synonyms"] and x["definition"] for x in t["senses"])
     assert "окошко" in appmod.lexicon.thesaurus("окна")["synonyms"]  # round trip ru→en→ru
+
+
+def test_pwa_manifest_is_linked_and_served():
+    from fastapi.testclient import TestClient
+
+    c = TestClient(appmod.app)
+    assert 'rel="manifest" href="/static/manifest.webmanifest"' in c.get("/").text
+    m = c.get("/static/manifest.webmanifest").json()
+    assert m["start_url"] == "/" and m["scope"] == "/" and m["display"] == "standalone"
+    for icon in m["icons"]:
+        assert c.get(icon["src"]).status_code == 200
 
 
 # ---- e2e ----

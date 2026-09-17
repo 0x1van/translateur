@@ -3,6 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="manifest" href="/static/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="translateur">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#F5F0E6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f071a" media="(prefers-color-scheme: dark)">
 <title>translateur</title>
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t);})();</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -14,6 +22,8 @@
   <span class="brand">translateur</span>
   <label>project <select id="preset"></select></label>
   <button id="voices-btn" type="button" title="project settings" aria-label="project settings">&#9881;&#xFE0E;</button>
+  <button id="copy-btn" type="button" title="copy the whole English text">copy english</button>
+  <a href="/api/picks" target="_blank" title="every variant you chose, one JSON line each">choices</a>
   <button id="theme-btn" type="button" aria-label="Toggle dark theme">dark</button>
   <span id="status" class="status" aria-live="polite"></span>
 </header>

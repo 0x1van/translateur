@@ -1,0 +1,13 @@
+{
+  "name": "translateur",
+  "short_name": "translateur",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#F5F0E6",
+  "theme_color": "#F5F0E6",
+  "icons": [
+    { "src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
