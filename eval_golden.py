@@ -229,6 +229,9 @@ def picks_summary(picks: list[dict]) -> dict:
     the display order was logged: a letter that only wins on the left is a layout, not a voice."""
     by = defaultdict(Counter)
     for p in picks:
+        if p.get("kind") == "analyse":  # edit-mode hunks: shown once, accepted on click
+            by["analyse hunks"]["accepted" if p["accepted"] else "shown"] += len(p["hunks"])
+            continue
         by["letter"][p["chosen"]] += 1
         by[f"preset {p['preset']}"][p["chosen"]] += 1
         by[f"model {p['model']}"][p["chosen"]] += 1
@@ -244,7 +247,7 @@ def picks() -> None:
     rows = [json.loads(x) for x in path.read_text().splitlines() if x.strip()]
     print(f"{len(rows)} picks")
     for name, counts in picks_summary(rows).items():
-        total = sum(counts.values())
+        total = counts["shown"] if name == "analyse hunks" else sum(counts.values())  # rate, not share
         print(
             f"{name:28}"
             + "  ".join(f"{k}: {v} ({100 * v / total:.0f}%)" for k, v in counts.items())

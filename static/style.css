@@ -156,6 +156,7 @@ textarea.src:focus { outline: none; }
 .apply-all { margin-top: var(--space-xs); }
 .issue small { display: block; color: var(--color-text-muted); font-family: var(--font-mono); font-size: 0.65rem; }
 .clean { font-family: var(--font-mono); font-size: 0.65rem; color: var(--color-text-muted); }
+.note { font-size: 0.85rem; color: var(--color-text-muted); margin: var(--space-xs) 0; padding-left: 0.6rem; border-left: 2px solid var(--color-border); }
 
 /* ---- variants card ---- */
 .variants {  /* sits in the English cell, under the draft the chosen variant goes into */

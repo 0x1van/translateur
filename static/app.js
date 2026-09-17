@@ -133,7 +133,7 @@
           : '<span class="ph">paste the Russian here…</span>'}</p><textarea class="src" lang="ru" spellcheck="false" placeholder="…"></textarea></div>
         <div class="cell tr"><p class="en" lang="en-GB" title="click a word to look it up · click elsewhere to edit"></p><textarea class="tr" lang="en-GB" spellcheck="true" placeholder="…"></textarea>
           <div class="variants" hidden></div>
-          <details class="more"><summary title="paragraph tools">⋯</summary><menu><button type="button" class="check">check grammar</button><button type="button" class="uk">UK spelling</button><button type="button" class="analyse" disabled title="soon: an editor reads the paragraph and suggests options">analyse</button></menu></details><div class="issues"></div></div>
+          <details class="more"><summary title="paragraph tools">⋯</summary><menu><button type="button" class="check" data-mode="grammar">check grammar</button><button type="button" class="uk">UK spelling</button><button type="button" class="analyse" data-mode="edit" title="an editor reads the paragraph against the Russian and proposes changes">analyse</button><button type="button" class="notes" data-mode="notes" title="an informant notes what the Russian is doing that the draft may have missed">notes</button></menu></details><div class="issues"></div></div>
       </div>`).join('');
     grid.querySelectorAll('.cell.tr').forEach((cell, i) => { $('textarea.tr', cell).value = work.translation[i]; view(cell); });
     grid.querySelectorAll('textarea.src').forEach((ta, i) => { ta.value = work.source[i]; });
@@ -270,8 +270,8 @@
     if (w) return showDictionary(w);
     const ru = e.target.closest('p.ru');
     if (ru) return editSource(ru.closest('.cell.src'));
-    const chk = e.target.closest('.check');
-    if (chk) { chk.closest('details').open = false; return checkGrammar(chk.closest('.row')); }
+    const rev = e.target.closest('.more [data-mode]');
+    if (rev) { rev.closest('details').open = false; return review(rev.closest('.row'), rev.dataset.mode); }
     const uk = e.target.closest('.uk');
     if (uk) {
       uk.closest('details').open = false;
@@ -371,19 +371,25 @@
     grow(ta); save();
   }
 
-  // ---------- grammar ----------
-  async function checkGrammar(row) {
+  // ---------- paragraph passes: grammar, editor (hunks), informant (notes) ----------
+  function logHunks(row, hunks, accepted) {  // the analyse gate: accepted / shown
+    api('/api/pick/analyse', { method: 'POST', body: { slug: work.slug, i: +row.dataset.i, model: modelSel.value, preset: presetSel.value, hunks, accepted } }).catch(() => {});
+  }
+  async function review(row, mode) {
     const ta = $('textarea.tr', row), out = $('.issues', row);
     if (!ta.value.trim()) return;
-    out.innerHTML = '<p class="thinking">checking</p>';
+    out.innerHTML = `<p class="thinking">${mode === 'grammar' ? 'checking' : 'reading'}</p>`;
+    out.dataset.mode = mode;
     try {
       const res = await api('/api/check', { method: 'POST', body: {
-        model: modelSel.value, text: ta.value, source: work.source[+row.dataset.i] } });
+        model: modelSel.value, text: ta.value, source: work.source[+row.dataset.i], preset: presetSel.value, mode } });
       const issues = res.issues || [], notes = res.notes || [];
+      if (mode === 'edit' && issues.length) logHunks(row, issues.map(i => ({ quote: i.quote, fix: i.fix })), false);
       out.innerHTML = issues.length
         ? issues.map(i => `<button type="button" class="issue" data-start="${i.start}" data-q="${esc(i.quote)}" data-f="${esc(i.fix)}" data-pre="${esc(i.pre || '')}" data-post="${esc(i.post || '')}"><s>${esc(i.quote)}</s> → <b>${esc(i.fix)}</b></button>`).join('')
           + `<p class="clean">${notes.map(esc).join(' · ')}</p><button type="button" class="apply-all">apply all</button>`
-        : '<p class="clean">no issues found ·</p>';
+        : mode === 'notes' && notes.length ? notes.map(n => `<p class="note">${esc(n)}</p>`).join('')
+        : `<p class="clean">${mode === 'grammar' ? 'no issues found' : 'nothing to add'} ·</p>`;
       // apply all = each remaining hunk in turn, so edits made since the check survive
       const all = $('.apply-all', out);
       if (all) all.onclick = () => { out.querySelectorAll('.issue').forEach(applyIssue); out.innerHTML = ''; };
@@ -405,6 +411,7 @@
       at = best;
     }
     if (at < 0) { btn.remove(); return; }
+    if ($('.issues', row).dataset.mode === 'edit') logHunks(row, [{ quote: q, fix: f }], true);
     ta.value = ta.value.slice(0, at) + f + ta.value.slice(at + q.length);
     const shift = f.length - q.length;
     row.querySelectorAll('.issue').forEach(b => { if (+b.dataset.start > at) b.dataset.start = +b.dataset.start + shift; });

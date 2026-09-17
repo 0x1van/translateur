@@ -18,6 +18,7 @@ import threading
 import time
 from functools import cache
 from pathlib import Path
+from typing import Literal
 
 import httpx
 import yaml
@@ -274,16 +275,39 @@ class Pick(BaseModel):
     chosen: str  # the letter clicked
 
 
-@app.post("/api/pick")
-def log_pick(body: Pick) -> dict:
-    """Append-only `picks.jsonl` in the store, one line per click, committed like a save."""
+class HunkLog(BaseModel):
+    """The analyse pass's hunks: all of them when shown, one when clicked. Accepted / shown is
+    the rate that decides whether edit mode stays (PLAN.md: below ~30 % it becomes notes only)."""
+
+    slug: str
+    i: int
+    model: str
+    preset: str = ""
+    hunks: list[dict]  # {quote, fix}
+    accepted: bool
+
+
+def _append_pick(record: dict, message: str) -> None:
+    """Append-only `picks.jsonl` in the store, one line per event, committed like a save."""
     # ponytail: a flat jsonl; load it into pandas/duckdb when there is something to analyse
-    line = json.dumps({"at": int(time.time()), **body.model_dump()}, ensure_ascii=False)
+    line = json.dumps({"at": int(time.time()), **record}, ensure_ascii=False)
     with _WRITE_LOCK:
         STORE_DIR.mkdir(parents=True, exist_ok=True)
         with (STORE_DIR / "picks.jsonl").open("a") as f:
             f.write(line + "\n")
-        _git_commit(STORE_DIR / "picks.jsonl", f"pick: {body.slug} {body.i}.{body.j} {body.chosen}")
+        _git_commit(STORE_DIR / "picks.jsonl", message)
+
+
+@app.post("/api/pick")
+def log_pick(body: Pick) -> dict:
+    _append_pick(body.model_dump(), f"pick: {body.slug} {body.i}.{body.j} {body.chosen}")
+    return {"ok": True}
+
+
+@app.post("/api/pick/analyse")
+def log_hunks(body: HunkLog) -> dict:
+    what = "accepted" if body.accepted else "shown"
+    _append_pick({"kind": "analyse", **body.model_dump()}, f"analyse: {body.slug} {body.i} {what} {len(body.hunks)}")
     return {"ok": True}
 
 
@@ -490,6 +514,7 @@ CHECK_SCHEMA = _schema(
     {"corrected": {"type": "string"}, "notes": {"type": "array", "items": {"type": "string"}}},
     ["corrected", "notes"],
 )
+NOTES_SCHEMA = _schema({"notes": {"type": "array", "items": {"type": "string"}}}, ["notes"])
 
 
 _MINIMAL_REASONING = {"reasoning": {"effort": "minimal"}}  # OpenRouter's form, a few tokens
@@ -759,7 +784,9 @@ async def alternatives(req: AltReq) -> dict:
 class CheckReq(BaseModel):
     model: str
     text: str
-    source: str = ""
+    source: str = ""  # the Russian paragraph
+    preset: str = ""  # for the glossary, edit mode only
+    mode: Literal["grammar", "edit", "notes"] = "grammar"
 
 
 def hunks(original: str, corrected: str) -> list[dict]:
@@ -773,9 +800,10 @@ def hunks(original: str, corrected: str) -> list[dict]:
     for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
         if op == "equal":
             continue
-        if i1 == i2:  # pure insertion: anchor on the preceding token (or the next, at start)
-            if i1 > 0:
-                i1, j1 = i1 - 1, j1 - 1
+        if i1 == i2:  # pure insertion: anchor on the preceding word (or the next, at start)
+            back = 2 if i1 > 1 and a[i1 - 1].isspace() else min(i1, 1)
+            if back:  # the tokens before an opcode come from an equal block, so both sides shift alike
+                i1, j1 = i1 - back, j1 - back
             else:
                 i2, j2 = i2 + 1, j2 + 1
         start, quote = pos[i1], "".join(a[i1:i2])
@@ -793,20 +821,62 @@ def hunks(original: str, corrected: str) -> list[dict]:
     return out
 
 
-@app.post("/api/check")
-async def check(req: CheckReq) -> dict:
-    system = (
+REVIEW = {
+    "grammar": (
         "You are a meticulous copy editor for British English literary prose. Correct only "
         "spelling, grammar, agreement, tense and punctuation errors. Do not touch style, word "
         "choice, rhythm or punctuation the author may have chosen deliberately (em-dashes, "
         "ellipses). Never add, remove or reorder sentences. Return the full text with only those corrections applied — identical to the "
         "input if it is clean — plus one short note per correction. "
         'Reply with JSON only: {"corrected": "...", "notes": ["..."]}'
-    )
+    ),
+    "edit": (
+        "You are the editor of a literary translation from Russian into British English. You "
+        "have the Russian paragraph and the translator's English. Change the English only where "
+        "the change is clearly better on one of four counts: accurate to the source (nothing "
+        "dropped, added or shifted in meaning); natural English (idiom, word order, rhythm); "
+        "consistent with the paragraph's own earlier choices and the glossary; coherent as a "
+        "paragraph. Keep the translator's voice and register; leave what works alone. Never add, "
+        "remove or reorder sentences. Return the full text with your changes applied — identical "
+        "to the input if you would change nothing — plus one short note per change saying why. "
+        'Reply with JSON only: {"corrected": "...", "notes": ["..."]}'
+    ),
+    "notes": (
+        "You are an informant on the Russian text for a translator into British English. You "
+        "have the Russian paragraph and the translator's English. Write short notes, one per "
+        "point, only where the draft may have missed something: particles (же, ведь, -то, ли, "
+        "уж, разве) and what each does here; a word the Russian repeats and how the draft "
+        "rendered each occurrence; shifts of register (colloquial, bureaucratic, archaic, "
+        "diminutives); what an ellipsis or dash is doing; the form of a name (diminutive, "
+        "patronymic, surname alone) and what it signals. No rewrites, no praise, nothing "
+        'obvious; at most eight notes, the ones that matter most. Reply with JSON only: {"notes": ["..."]}'
+    ),
+}
+
+
+@app.post("/api/check")
+async def check(req: CheckReq) -> dict:
+    """One model pass over an English paragraph. grammar: mechanical fixes, the Russian as context.
+    edit: an editor's changes against the Russian, as hunks to accept one by one. notes: an
+    informant's observations, no text returned."""
+    system = REVIEW[req.mode]
+    if req.mode != "grammar":  # the editor and the informant must know what the translator is doing
+        if desc := description_of(req.preset):
+            system += f"\nAbout this translation, in the translator's words (what it asks for is a choice, not an error): {desc}"
+        glossary, _ = glossary_for(req.preset, req.source)
+        if glossary:
+            system += "\nGlossary: " + "; ".join(f"{g['ru']} → {g['en']}" for g in glossary)
     user = (
-        f"RUSSIAN ORIGINAL (context only):\n{req.source}\n\n" if req.source else ""
-    ) + f"ENGLISH TEXT TO CHECK:\n{req.text}"
-    out = await llm_json(req.model, system, user, CHECK_SCHEMA, 0.2, 200 + len(req.text))
+        f"RUSSIAN ORIGINAL{' (context only)' if req.mode == 'grammar' else ''}:\n{req.source}\n\n"
+        if req.source
+        else ""
+    ) + f"ENGLISH TEXT:\n{req.text}"
+    cap = 200 + len(req.text)
+    if req.mode == "notes":
+        out = await llm_json(req.model, system, user, NOTES_SCHEMA, 0.0, cap)
+        return {"corrected": req.text, "issues": [], "notes": [str(n) for n in out["notes"] if n]}
+    temp = 0.2 if req.mode == "grammar" else 0.0
+    out = await llm_json(req.model, system, user, CHECK_SCHEMA, temp, cap)
     corrected = str(out.get("corrected", req.text)).strip("\n") or req.text
     notes = [str(n) for n in out.get("notes", []) if n]
     return {"corrected": corrected, "issues": hunks(req.text, corrected), "notes": notes}

@@ -56,7 +56,7 @@ class FakeOllama(BaseHTTPRequestHandler):
         system = body["messages"][0]["content"]
         user = body["messages"][1]["content"]
         if "copy editor" in system:
-            text = user.split("TO CHECK:\n")[1]
+            text = user.split("ENGLISH TEXT:\n")[1]
             fixed = (
                 text.replace("teh", "the")
                 .replace("He were", "He was")
@@ -64,6 +64,13 @@ class FakeOllama(BaseHTTPRequestHandler):
                 .replace("Helo!", "Hello!")
             )
             out = {"corrected": fixed, "notes": ["fix"] if fixed != text else []}
+        elif "the editor of" in system:  # analyse: a word-choice change against the Russian
+            assert body["temperature"] == 0 and "RUSSIAN ORIGINAL:\n" in user
+            text = user.split("ENGLISH TEXT:\n")[1]
+            out = {"corrected": text.replace("big", "vast"), "notes": ["огромный is vast, not big"]}
+        elif "informant" in system:
+            assert "notes" in body["response_format"]["json_schema"]["schema"]["properties"]
+            out = {"notes": ["же here insists, not contrasts"]}
         elif "one span" in system:
             term = user.rsplit("[[", 1)[1].split("]]")[0]
             out = {"alternatives": [f"other {term}", term, f"bold {term}"]}
@@ -273,6 +280,12 @@ def test_eval_golden(tmp_path, monkeypatch):
         "model m": {"A": 1, "B": 1},
         "position": {1: 1},
     }
+    assert ev.picks_summary(
+        [
+            {"kind": "analyse", "accepted": False, "hunks": [{}, {}, {}]},
+            {"kind": "analyse", "accepted": True, "hunks": [{}]},
+        ]
+    ) == {"analyse hunks": {"shown": 3, "accepted": 1}}
     # a run against the fake model: every item gets three voices, counts and badness
     monkeypatch.setattr(ev, "EVAL_DIR", tmp_path)
     asyncio.run(ev.run("t", "fake-9b", 100, {}))
@@ -374,7 +387,7 @@ def test_hunks():
     ]
     assert core(appmod.hunks("a b", "a b")) == []
     assert core(appmod.hunks("the end", "the very end")) == [
-        {"start": 3, "quote": " ", "fix": " very "}
+        {"start": 0, "quote": "the ", "fix": "the very "}  # anchored on the word, not the space
     ]
     assert core(appmod.hunks("end", "the end")) == [{"start": 0, "quote": "end", "fix": "the end"}]
 
@@ -627,10 +640,9 @@ def test_e2e(page, server_url):
     ta2.fill("teh cat. teh dog.")
     page.keyboard.press("Escape")
 
-    def check(row):  # "check grammar" lives in the ⋯ menu in the corner of the English cell
+    def check(row, item=".check"):  # the passes live in the ⋯ menu in the corner of the English cell
         row.locator(".more summary").click()
-        assert row.locator(".analyse").is_disabled()  # reserved for the editor pass, not built
-        row.locator(".check").click()
+        row.locator(item).click()
         assert not row.locator("details.more").evaluate("d => d.open")  # picking closes it
 
     check(page.locator(".row").nth(2))
@@ -682,6 +694,31 @@ def test_e2e(page, server_url):
     page.wait_for_selector(".issue")
     page.locator(".issue").click()
     assert ta2.input_value() == "the end."
+    # analyse: the editor's hunk, shown then accepted, both logged for the acceptance gate
+    en2.click()
+    ta2.fill("A big end.")
+    page.keyboard.press("Escape")
+    logged_hunks = lambda accepted: page.expect_response(  # the log POSTs are fire-and-forget
+        lambda r: r.url.endswith("/api/pick/analyse") and r.request.post_data_json["accepted"] is accepted
+    )
+    with logged_hunks(False):
+        check(page.locator(".row").nth(2), ".analyse")
+        page.wait_for_selector(".issue")
+    assert page.locator(".row").nth(2).locator(".issues .clean").inner_text() == "огромный is vast, not big"
+    with logged_hunks(True):
+        page.locator(".issue").click()
+    assert ta2.input_value() == "A vast end."
+    logged = [json.loads(x) for x in (STORE / "picks.jsonl").read_text().splitlines() if '"analyse"' in x]
+    assert [(x["accepted"], x["hunks"]) for x in logged] == [
+        (False, [{"quote": "big", "fix": "vast"}]),
+        (True, [{"quote": "big", "fix": "vast"}]),
+    ]
+    assert logged[0]["slug"] == "demo-work" and logged[0]["i"] == 2 and logged[0]["preset"] == "demo"
+    # notes: the informant's list, nothing to apply
+    check(page.locator(".row").nth(2), ".notes")
+    page.wait_for_selector(".note")
+    assert page.locator(".row").nth(2).locator(".note").all_inner_texts() == ["же here insists, not contrasts"]
+    assert page.locator(".issue").count() == 0
 
     # "+ new" at the top of the tree; a new project can be created right there
     assert page.locator(".tree-head #new-btn").is_visible()

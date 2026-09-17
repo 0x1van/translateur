@@ -41,7 +41,14 @@ app (web manifest + touch icon, no service worker: the server does the work, not
   autosaves to `works/<slug>/translation.md`.
 - **click a Russian word** — dictionary (lemma, grammar, WikDict senses; click a translation to insert it) plus Russian near-synonyms (WikDict round trip ru→en→ru).
 - **English pane** — a rendered view with hoverable words until you click into it to type (click past a word, or Escape to leave). Sentences are numbered in step with the Russian; the numbers turn red when a paragraph's sentence counts differ. **Click a word** (or select a phrase while editing) — one popover: the model's alternatives for that span (contextual, sampled wild), WordNet synonyms grouped by sense, and Moby's flat all-senses list folded behind *more*; click any to swap it in.
-- **check grammar** — in the ⋯ menu at the corner of each English paragraph (next to it, greyed out: **analyse**, an editor pass still to come); model pass per paragraph; click an issue to apply the fix. Spelling is the
+- **⋯ menu** at the corner of each English paragraph, one model pass per item: **check grammar**
+  (mechanical fixes; click an issue to apply it), **UK spelling** (converts the paragraph; model
+  output already arrives in UK spelling, your own US spellings get a dotted underline),
+  **analyse** (an editor reads the paragraph against the Russian, the project's about text and
+  glossary, and proposes changes as the same click-to-apply hunks; every hunk shown and every
+  hunk accepted is logged to `picks.jsonl`, and `eval_golden.py picks` prints the acceptance
+  rate) and **notes** (an informant lists what the Russian is doing that the draft may have
+  missed: particles, repeated words, register, names; nothing to apply). Spelling is the
   browser's own (`spellcheck` on the pane).
 - **works & projects** — a work is `works/<slug>/source.md` + `translation.md`. `source.md` may
   open with front matter `project:` (a preset name) and `title:`; the tree groups works by project
