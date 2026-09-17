@@ -86,6 +86,7 @@ sentences; chrF for voices A/B/C:
 | 2026-09-17 | z-ai/glm-5.3 | 42.7 | 48.2 | 41.4 | needs minimal reasoning; = Pro, < Sol |
 | 2026-09-17 | deepseek-v4-pro + paragraph context | 44.6 | 51.0 | 40.3 | kept; C overrun 1.28 → 1.20 |
 | 2026-09-17 | + freedom 0.1/0.7/0.8 | 45.2 | 49.6 | 39.2 | kept; B at 0.6 was −2.3 twice, so 0.7 stays |
+| 2026-09-17 | + under-run and rejected-term checks | 44.9 | 49.4 | 41.4 | kept; nothing fires on this set |
 
 Rows below the model block are cumulative: each is the previous row plus one change, on the
 default model.
