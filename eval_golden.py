@@ -35,13 +35,14 @@ _ITEM = contextvars.ContextVar("item")  # inherited by the per-voice tasks trans
 
 def golden_items() -> list[dict]:
     """Every (sentence, reference) pair from sentence-aligned paragraphs, with the context the
-    browser would send: previous Russian sentence, the last two English sentences, next Russian."""
+    browser would send: the Russian paragraph, the English before it (this paragraph's, else the
+    previous paragraph's last two sentences)."""
     items = []
     for d in sorted(appmod.WORKS_DIR.iterdir()):
         if not (d / "source.md").exists():
             continue
         w = appmod.load_work(d.name)
-        prev_ru_tail, prev_en_tail = "", []
+        prev_en_tail = []
         for i, (block, en) in enumerate(zip(w["sentences"], w["translation"])):
             en_sents = appmod.split_sentences(en) if en.strip() else []
             if block and len(en_sents) == len(block):
@@ -54,12 +55,10 @@ def golden_items() -> list[dict]:
                             "preset": w["project"] or "plain",
                             "ru": ru,
                             "ref": ref,
-                            "prev_ru": block[j - 1] if j else prev_ru_tail,
-                            "prev_en": " ".join((en_sents[:j] if j else prev_en_tail)[-2:]),
-                            "next_ru": block[j + 1] if j + 1 < len(block) else "",
+                            "para_ru": " ".join(block),
+                            "para_en": " ".join(en_sents[:j] if j else prev_en_tail[-2:]),
                         }
                     )
-            prev_ru_tail = block[-1] if block else prev_ru_tail
             prev_en_tail = en_sents or prev_en_tail
     return items
 
@@ -108,9 +107,8 @@ async def run(name: str, model: str, n: int, freedom: dict[str, float]) -> None:
                 description=descriptions[it["preset"]],
                 freedom=freedom or appmod.DEFAULT_FREEDOM,
                 sentence=it["ru"],
-                prev_ru=it["prev_ru"],
-                prev_en=it["prev_en"],
-                next_ru=it["next_ru"],
+                para_ru=it["para_ru"],
+                para_en=it["para_en"],
             )
             out = await appmod.translate(req)
             print(".", end="", file=sys.stderr, flush=True)

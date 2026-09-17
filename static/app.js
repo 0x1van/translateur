@@ -274,17 +274,15 @@
     sent.classList.add('active'); row.classList.add('active');
     const box = $('.variants', row);
     const sents = work.sentences[i];
-    const prev_ru = j > 0 ? sents[j - 1] : (i > 0 ? work.sentences[i - 1].slice(-1)[0] || '' : '');
     // "English so far": the sentences already rendered before this one (by position), else the
     // tail of the previous paragraph's English
     const enSents = t => enSpans(t).map(x => x.s);
-    const prev_en = (j > 0 ? enSents($('textarea.tr', row).value).slice(0, j)
-      : (i > 0 ? enSents(grid.querySelectorAll('textarea.tr')[i - 1].value) : [])).slice(-2).join(' ');
+    const para_en = (j > 0 ? enSents($('textarea.tr', row).value).slice(0, j)
+      : (i > 0 ? enSents(grid.querySelectorAll('textarea.tr')[i - 1].value).slice(-2) : [])).join(' ');
     // variants for Russian sentence j target English sentence j (replace), else the slot after j-1
     const spans = enSpans($('textarea.tr', row).value), target = spans[j] || null;
     const slot = target ? null : (spans[j - 1] ? spans[j - 1].b : null);
     highlightTarget(row, target);
-    const next_ru = sents[j + 1] || '';
     box.hidden = false;
     box.innerHTML = `<header><span>${esc(sent.querySelector('.n').textContent)} ·</span>
         <input class="guidance" placeholder="guidance, e.g. more archaic" value="${esc(guidance)}">
@@ -301,7 +299,7 @@
     try {
       const out = await api('/api/translate', { method: 'POST', signal: ctl.signal, body: {
         model: modelSel.value, preset: v.name, description: v.description, freedom,
-        sentence: sents[j], prev_ru, prev_en, next_ru, guidance } });
+        sentence: sents[j], para_ru: sents.join(' '), para_en, guidance } });
       // shuffled per card: a pick then says which voice won, not which button was leftmost
       const order = ['ABC', 'ACB', 'BAC', 'BCA', 'CAB', 'CBA'][Math.floor(Math.random() * 6)];
       $('.thinking', box).outerHTML = [...order].map(k =>

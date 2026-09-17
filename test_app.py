@@ -257,14 +257,10 @@ def test_eval_golden(tmp_path, monkeypatch):
         (0, 1, "Two."),
         (1, 0, "Three."),
     ]
-    assert (
-        items[1]["prev_ru"] == "Раз."
-        and items[1]["prev_en"] == "One."
-        and items[1]["next_ru"] == ""
-    )
-    assert (
-        items[2]["prev_ru"] == "Два." and items[2]["prev_en"] == "One. Two."
-    )  # across the paragraph
+    assert items[1]["para_ru"] == "Раз. Два." and items[1]["para_en"] == "One."
+    assert items[2]["para_en"] == "One. Two."  # across the paragraph
+    assert appmod.around("x" * 3000, "x" * 10)[:1] == "x" and appmod.around("a b", "b") == "a b"
+    assert appmod.around("a" * 1000 + "T" + "b" * 1000, "T").count("T") == 1
     assert ev.wilson(0, 0) == (0, 0) and [round(x, 2) for x in ev.wilson(50, 100)] == [0.4, 0.6]
     assert ev.picks_summary(
         [

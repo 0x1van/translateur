@@ -574,9 +574,8 @@ class TranslateReq(BaseModel):
     freedom: dict[str, float] = DEFAULT_FREEDOM
     description: str = ""  # the project in the translator's own words; the app writes the rest
     sentence: str
-    prev_ru: str = ""
-    prev_en: str = ""
-    next_ru: str = ""
+    para_ru: str = ""  # the whole paragraph the sentence sits in
+    para_en: str = ""  # the English before it: this paragraph's so far, else the previous one's tail
     guidance: str = ""
 
 
@@ -603,6 +602,16 @@ def system_prompt(description: str, voices: dict[str, str]) -> str:
     )
 
 
+def around(text: str, target: str, n: int = 1500) -> str:
+    """`text` cut to about n chars around `target`: a Dostoevsky paragraph would otherwise cost
+    more than it tells, and the far end of it does not help with this sentence."""
+    if len(text) <= n:
+        return text
+    i = max(text.find(target), 0)
+    a = max(0, min(i - (n - len(target)) // 2, len(text) - n))
+    return ("…" if a else "") + text[a : a + n].strip() + ("…" if a + n < len(text) else "")
+
+
 def leaks_cyrillic(text: str) -> bool:
     """Any Cyrillic in the 'English': the model echoed the source or left a word untranslated."""
     return bool(re.search(r"[А-Яа-яЁё]", text))
@@ -625,8 +634,8 @@ def badness(text: str, source: str) -> int:
 
 @app.post("/api/translate")
 async def translate(req: TranslateReq) -> dict:
-    """One model call per voice, in parallel, each at its own temperature. The shared system
-    prompt comes first so Ollama's prefix cache serves all three."""
+    """One model call per voice, in parallel, each at its own temperature; the system prompt is
+    the same for all three, the user message names the voice."""
     glossary, rejected = glossary_for(req.preset, req.sentence)
     voices = voices_for(req.preset)
     system = (
@@ -648,12 +657,11 @@ async def translate(req: TranslateReq) -> dict:
     )
     # ponytail: target goes last, inside delimiters — small models otherwise translate NEXT too
     user = ""
-    if req.prev_ru:
-        user += f"Context — the previous Russian sentence (do not translate): {req.prev_ru}\n"
-    if req.prev_en:
-        user += f"Context — your English so far (continue its voice): {req.prev_en}\n"
-    if req.next_ru:
-        user += f"Context — the next Russian sentence (do not translate): {req.next_ru}\n"
+    if req.para_ru.strip() != req.sentence.strip():
+        para = around(req.para_ru, req.sentence)
+        user += f"Context — the paragraph it comes from (do not translate): {para}\n"
+    if req.para_en:
+        user += f"Context — your English so far (continue its voice): {req.para_en[-1500:]}\n"
     user += f"\nTranslate ONLY the sentence between <<< and >>>, nothing else:\n<<< {req.sentence} >>>\n"
 
     async def one(k: str) -> tuple[str, str]:
