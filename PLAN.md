@@ -52,6 +52,9 @@ Key dependency: nothing in bucket 2–4 can be verified without (a) a picks log 
 - [ ] JSON vs free text: golden set both ways once; keep JSON unless free text wins clearly.
 - [ ] Model list: add DeepSeek-V3.2 (cheap voice) and Gemini 2.5 Pro (a "best" button for hard sentences, reasoning may be tried there only). Minimal-prompt path for TranslateGemma/Hunyuan on Ollama only if a local voice A is wanted.
 
+## Baselines (eval/ is gitignored, so the numbers live here)
+- 2026-09-17 `baseline`, qwen38-9b on Ollama, 100 of 270 golden sentences, freedom 0.3/0.7/1.0: retry rate 0.13 extra calls per voice; bad 1 % per voice; length ratio A 1.13 / B 1.11 / C 1.27; chrF A 41.1 / B 40.6 / C 34.8. Two of the three bad outputs were the previous sentence translated along with the target (context bleed), the failure paragraph context must not make worse.
+
 ## Success signals
 
 - badness retry rate per call falls after Sprint 1.
