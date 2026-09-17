@@ -59,3 +59,29 @@ app (web manifest + touch icon, no service worker: the server does the work, not
 Tests: `uv run python -m playwright install chromium chromium-headless-shell` once, then
 `uv run pytest`. The e2e test runs against a fake model endpoint. `uv run python qa_live.py` is the slow
 end-to-end sweep against the real model (32 scenarios, own servers, throwaway copy of works/).
+
+## Evaluating a model or a prompt change
+
+The golden set is your own finished work: every sentence in `store/` whose paragraph has a
+saved English with the same sentence count (270 today; `--n` picks a fixed 100 of them). A run
+calls the real translate path with the context the browser sends, one JSON line per sentence in
+`eval/<name>.jsonl` (gitignored, resumable). chrF against your sentence is a floor, not a judge:
+it catches a model that drops, echoes or overruns, it cannot rank two good models. Picks do that.
+
+    set -a; source .env; set +a
+    uv run python eval_golden.py run <name> --model <id>      # ~$0.15 on DeepSeek Pro, ~$1.20 on GPT Sol
+    uv run python eval_golden.py compare <a> <b>              # paired delta per voice, wins, Wilson CI
+    uv run python eval_golden.py picks                        # what you actually chose, by voice/position
+
+Keep a change only if no voice's delta is negative and bad/retry rates do not rise. Same 100
+sentences, same prompt, freedom 0.3/0.7/1.0 unless noted; chrF for voices A/B/C:
+
+| date | model | A | B | C | notes |
+|---|---|---|---|---|---|
+| 2026-09-17 | qwen38-9b (Ollama) | 41.1 | 40.6 | 34.8 | 1 % bad, 0.13 retries; C overruns (len 1.27) |
+| 2026-09-17 | openai/gpt-5.6-sol | 44.5 | 50.7 | 44.0 | 0 bad; best C |
+| 2026-09-17 | deepseek/deepseek-v4-pro-0813 | 43.8 | 49.4 | 39.8 | 0 bad; = Sol on A/B, C overruns (1.28); default |
+| 2026-09-17 | deepseek/deepseek-v4.1-flash | 44.6 | 46.6 | 42.6 | 0 bad; = Pro |
+| 2026-09-17 | z-ai/glm-5.3 | 42.7 | 48.2 | 41.4 | needs minimal reasoning; = Pro, < Sol |
+
+`openai/gpt-5.6-luna` was dropped: OpenRouter's shared upstream throttled it three runs in a row.
