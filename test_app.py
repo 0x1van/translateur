@@ -606,9 +606,14 @@ def test_e2e(page, server_url):
     assert ta2.is_hidden() and en2.inner_text() == "5teh end."  # numbered 5, in step with the left
     assert not en2.evaluate("p => p.classList.contains('off')")  # 1 sentence vs "Конец.": aligned
     en2.click()
-    ta2.fill("A gray, colorful theater; modeled, travelled.")
+    ta2.fill("A gray, colorful theater; modeled, travelled. Centered, analyzing humorous dialogs.")
     page.keyboard.press("Escape")
-    assert en2.locator(".us").all_inner_texts() == ["gray", "colorful", "theater", "modeled"]
+    assert en2.locator(".us").all_inner_texts() == ["gray", "colorful", "theater", "modeled", "Centered", "analyzing", "dialogs"]
+    page.locator(".row").nth(2).locator(".more summary").click()  # ⋯ menu → UK spelling converts in place
+    page.locator(".row").nth(2).locator(".more .uk").click()
+    assert ta2.input_value() == "A grey, colourful theatre; modelled, travelled. Centred, analysing humorous dialogues."
+    assert en2.locator(".us").count() == 0
+    page.wait_for_function("document.querySelector('#status').textContent.startsWith('saved')")
     en2.click()
     ta2.fill("teh end. Really.")
     page.keyboard.press("Escape")

@@ -133,7 +133,7 @@
           : '<span class="ph">paste the Russian here…</span>'}</p><textarea class="src" lang="ru" spellcheck="false" placeholder="…"></textarea></div>
         <div class="cell tr"><p class="en" lang="en-GB" title="click a word to look it up · click elsewhere to edit"></p><textarea class="tr" lang="en-GB" spellcheck="true" placeholder="…"></textarea>
           <div class="variants" hidden></div>
-          <details class="more"><summary title="paragraph tools">⋯</summary><menu><button type="button" class="check">check grammar</button><button type="button" class="analyse" disabled title="soon: an editor reads the paragraph and suggests options">analyse</button></menu></details><div class="issues"></div></div>
+          <details class="more"><summary title="paragraph tools">⋯</summary><menu><button type="button" class="check">check grammar</button><button type="button" class="uk">UK spelling</button><button type="button" class="analyse" disabled title="soon: an editor reads the paragraph and suggests options">analyse</button></menu></details><div class="issues"></div></div>
       </div>`).join('');
     grid.querySelectorAll('.cell.tr').forEach((cell, i) => { $('textarea.tr', cell).value = work.translation[i]; view(cell); });
     grid.querySelectorAll('textarea.src').forEach((ta, i) => { ta.value = work.source[i]; });
@@ -145,10 +145,19 @@
      then it is the textarea. Every piece carries its offset so a click can place the caret. */
   const EN_TOK = /[A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё'’-]*|[^A-Za-zА-Яа-яЁё]+/g;
   const EN_BOUND = /([.!?…]["»”)]*)\s+(?=[«"“(]?[A-ZА-ЯЁ]|[—–-]\s+[«"“(]?[A-ZА-ЯЁ])/g;  // = split_sentences
-  // US spellings the model (or a tired translator) lets through; -ize is fine (Oxford), so not listed
-  const US = /^(?:(?:color|honor|humor|favor|favorite|behavior|neighbor|labor|harbor|rumor|savor|vigor|armor|endeavor|gray|center|theater|liter|fiber|somber|defense|offense|pretense|catalog|dialog|analyze|paralyze|pajamas|plow|mold|jewelry|skeptic|aluminum|mustache)(?:s|ed|ing|ful|less|ly|ness|ism|ist|al)?|(?:travel|cancel|marvel|model|fuel|label|signal|quarrel|counsel)(?:ed|ing|er|ers))$/i;
+  /* US → UK spelling: the unambiguous words only (program, meter, check, tire are left alone; -ize
+     is fine, Oxford). Model output is converted before it is shown; the pane underlines what you
+     typed yourself, and the ⋯ menu converts a paragraph. */
+  const UK = { color: 'colour', honor: 'honour', humor: 'humour', favor: 'favour', favorite: 'favourite', behavior: 'behaviour', neighbor: 'neighbour', labor: 'labour', harbor: 'harbour', rumor: 'rumour', savor: 'savour', vigor: 'vigour', armor: 'armour', endeavor: 'endeavour', gray: 'grey', center: 'centre', theater: 'theatre', liter: 'litre', fiber: 'fibre', somber: 'sombre', defense: 'defence', offense: 'offence', pretense: 'pretence', catalog: 'catalogue', dialog: 'dialogue', analyze: 'analyse', paralyze: 'paralyse', pajamas: 'pyjamas', plow: 'plough', mold: 'mould', jewelry: 'jewellery', skeptic: 'sceptic', aluminum: 'aluminium', mustache: 'moustache' };
+  const UK_RE = new RegExp(`\\b(?:(${Object.keys(UK).map(k => k.replace(/e$/, 'e?')).join('|')})(s|ed|ing|ful|less|ly|ness|ism|ist|al)?|(travel|cancel|marvel|model|fuel|label|signal|quarrel|counsel)(ed|ing|er|ers))\\b`, 'gi');
+  const toUK = t => t.replace(UK_RE, (m, stem, suf = '', l, lsuf) => {
+    let uk = UK[stem?.toLowerCase()] || UK[stem?.toLowerCase() + 'e'] || '';  // analyz-ing
+    if (l) uk = l + 'l' + lsuf;
+    else { if (suf && /^[ei]/.test(suf) && uk.endsWith('e')) uk = uk.slice(0, -1); uk += suf; }  // centred, analysing
+    return /^[A-Z]/.test(m) ? uk[0].toUpperCase() + uk.slice(1) : uk;
+  });
   const tok = (t, base) => [...t.matchAll(EN_TOK)].map(m =>
-    `<span${/^[A-Za-zА-Яа-яЁё]/.test(m[0]) ? ` class="w${US.test(m[0]) ? ' us' : ''}"` : ''} data-a="${base + m.index}">${esc(m[0])}</span>`).join('');
+    `<span${/^[A-Za-zА-Яа-яЁё]/.test(m[0]) ? ` class="w${toUK(m[0]) !== m[0] ? ' us' : ''}"` : ''} data-a="${base + m.index}">${esc(m[0])}</span>`).join('');
   function view(cell) {
     const v = $('textarea.tr', cell).value, p = $('p.en', cell), row = cell.closest('.row');
     if (!v.trim()) { p.innerHTML = '<span class="ph" data-a="0">…</span>'; return; }
@@ -263,6 +272,13 @@
     if (ru) return editSource(ru.closest('.cell.src'));
     const chk = e.target.closest('.check');
     if (chk) { chk.closest('details').open = false; return checkGrammar(chk.closest('.row')); }
+    const uk = e.target.closest('.uk');
+    if (uk) {
+      uk.closest('details').open = false;
+      const cell = uk.closest('.cell.tr'), ta = $('textarea.tr', cell), v = toUK(ta.value);
+      if (v !== ta.value) { ta.value = v; ta.sel = null; save(); if (!cell.classList.contains('editing')) view(cell); }
+      return;
+    }
     const iss = e.target.closest('.issue');
     if (iss) return applyIssue(iss);
   });
@@ -302,6 +318,7 @@
       const out = await api('/api/translate', { method: 'POST', signal: ctl.signal, body: {
         model: modelSel.value, preset: v.name, description: v.description, freedom,
         sentence: sents[j], para_ru: sents.join(' '), para_en, guidance } });
+      for (const k of 'ABC') out[k] = toUK(out[k]);
       // shuffled per card: a pick then says which voice won, not which button was leftmost
       const order = ['ABC', 'ACB', 'BAC', 'BCA', 'CAB', 'CBA'][Math.floor(Math.random() * 6)];
       $('.thinking', box).outerHTML = [...order].map(k =>
@@ -464,7 +481,7 @@
       const r = await api('/api/alternatives', { method: 'POST', signal: ctl.signal, body: {
         model: modelSel.value, preset: vc.name, description: vc.description,
         sentence: work.source[+ta.closest('.row').dataset.i], translation: v, start: a, end: b } });
-      alts.innerHTML = r.alternatives.length ? chips(r.alternatives) : '<p class="none">none ·</p>';
+      alts.innerHTML = r.alternatives.length ? chips(r.alternatives.map(toUK)) : '<p class="none">none ·</p>';
     } catch (err) { if (err.name !== 'AbortError') alts.innerHTML = `<p class="none">${esc(err.message)}</p>`; }
   }
 
