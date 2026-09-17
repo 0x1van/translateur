@@ -73,6 +73,12 @@ async def run(name: str, model: str, n: int, freedom: dict[str, float]) -> None:
     if len(items) > n:
         items = random.Random(0).sample(items, n)  # the same subset every run; joins are by key
     items.sort(key=key)
+    EVAL_DIR.mkdir(exist_ok=True)
+    path = EVAL_DIR / f"{name}.jsonl"
+    done = load(name) if path.exists() else {}  # rows are appended as they land: rerun to resume
+    items = [it for it in items if key(it) not in done]
+    if done:
+        print(f"{len(done)} done, {len(items)} to go", file=sys.stderr)
     calls = Counter()
     real = appmod.llm_json
 
@@ -107,7 +113,7 @@ async def run(name: str, model: str, n: int, freedom: dict[str, float]) -> None:
             )
             out = await appmod.translate(req)
             print(".", end="", file=sys.stderr, flush=True)
-            return {
+            row = {
                 **it,
                 "model": model,
                 "freedom": req.freedom,
@@ -115,15 +121,14 @@ async def run(name: str, model: str, n: int, freedom: dict[str, float]) -> None:
                 "bad": {k: appmod.badness(out[k], it["ru"]) for k in "ABC"},
                 "calls": calls[key(it)],
             }
+            with path.open("a") as f:  # one writer per process; a line is atomic at this size
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     try:
-        rows = await asyncio.gather(*(one(it) for it in items))
+        await asyncio.gather(*(one(it) for it in items))
     finally:
         appmod.llm_json = real
-    EVAL_DIR.mkdir(exist_ok=True)
-    path = EVAL_DIR / f"{name}.jsonl"
-    path.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows))
-    print(f"\n{len(rows)} items → {path}", file=sys.stderr)
+        print(f"\n{len(load(name))} items in {path}", file=sys.stderr)
     stats(name)
 
 
