@@ -135,9 +135,9 @@
           : '<span class="ph">paste the Russian here…</span>'}</p><textarea class="src" lang="ru" spellcheck="false" placeholder="…"></textarea></div>
         <div class="cell tr"><p class="en" lang="en-GB" title="click a word to look it up · click elsewhere to edit"></p><textarea class="tr" lang="en-GB" spellcheck="true" placeholder="…"></textarea>
           <div class="variants" hidden></div>
-          <details class="more"><summary title="paragraph tools">⋯</summary><menu><button type="button" class="check" data-mode="grammar">check grammar</button><button type="button" class="uk">UK spelling</button><button type="button" class="analyse" data-mode="edit" title="an editor reads the paragraph against the Russian and proposes changes">analyse</button><button type="button" class="notes" data-mode="notes" title="an informant notes what the Russian is doing that the draft may have missed">notes</button></menu></details><div class="issues"></div></div>
+          <p class="miss" hidden></p><details class="more"><summary title="paragraph tools">⋯</summary><menu><button type="button" class="check" data-mode="grammar">check grammar</button><button type="button" class="uk">UK spelling</button><button type="button" class="analyse" data-mode="edit" title="an editor reads the paragraph against the Russian and proposes changes">analyse</button><button type="button" class="notes" data-mode="notes" title="an informant notes what the Russian is doing that the draft may have missed">notes</button></menu></details><div class="issues"></div></div>
       </div>`).join('');
-    grid.querySelectorAll('.cell.tr').forEach((cell, i) => { $('textarea.tr', cell).value = work.translation[i]; view(cell); });
+    grid.querySelectorAll('.cell.tr').forEach((cell, i) => { $('textarea.tr', cell).value = work.translation[i]; view(cell); showMisses(cell, work.misses[i]); });
     grid.querySelectorAll('textarea.src').forEach((ta, i) => { ta.value = work.source[i]; });
     if (!status.classList.contains('err')) setStatus('');
   }
@@ -186,6 +186,12 @@
     }
     p.innerHTML = html;
     p.classList.toggle('off', n - n0 !== work.sentences[+row.dataset.i].length);  // sentence counts differ
+  }
+  /* Glossary renderings the saved paragraph lacks (the server checks by lemma on every save). */
+  function showMisses(cell, misses) {
+    const p = $('.miss', cell);
+    p.hidden = !misses?.length;
+    p.innerHTML = misses?.length ? 'glossary: ' + misses.map(m => `<span lang="ru">${esc(m.ru)}</span> → ${esc(m.en)}`).join(' · ') : '';
   }
   function edit(cell, at) {
     const ta = $('textarea.tr', cell);
@@ -255,8 +261,9 @@
       if (Object.keys(blocks).length) {
         seq = Math.max(seq + 1, Date.now());  // monotonic within this page and across reloads
         w.inflight = blocks;
-        await api('/api/works/' + w.slug, { method: 'PATCH', keepalive: unloading, body: { blocks, seq } });
+        const res = await api('/api/works/' + w.slug, { method: 'PATCH', keepalive: unloading, body: { blocks, seq } });
         for (const i in blocks) w.saved[i] = blocks[i];
+        if (w === work) for (const i in res.misses || {}) { w.misses[i] = res.misses[i]; showMisses(grid.querySelectorAll('.cell.tr')[i], res.misses[i]); }
       }
       if (w === work) markProgress();
       if (flush === mine) { flush = null; clearTimeout(saveTimer); setStatus('saved ·'); }  // else newer edits are queued
@@ -353,7 +360,7 @@
           out.glossary.map(g => `${esc(g.ru)} → ${esc(g.en)}`).join(' · ')}${
           out.rejected.map(r => ` · not “${esc(r.en)}”`).join('')}</p>` : '');
       if (blind) $('.reveal', box).onclick = ev => { ev.target.remove(); box.querySelectorAll('.variant[hidden]').forEach(b => { b.hidden = false; }); seen = 'ABC'; };
-      box.querySelectorAll('.variant').forEach(b => { if (out[b.dataset.k]) b.onclick = () => { insert(row, out[b.dataset.k], target, slot); api('/api/pick', { method: 'POST', body: { slug: work.slug, i, j, model: modelSel.value, preset: v.name, freedom, sentence: sents[j], guidance, variants: { A: out.A, B: out.B, C: out.C }, order, chosen: b.dataset.k, blind, seen, examples: out.examples } }).catch(() => {}); }; else b.disabled = true; });
+      box.querySelectorAll('.variant').forEach(b => { if (out[b.dataset.k]) b.onclick = () => { insert(row, out[b.dataset.k], target, slot); api('/api/pick', { method: 'POST', body: { slug: work.slug, i, j, model: modelSel.value, preset: v.name, freedom, sentence: sents[j], guidance, variants: { A: out.A, B: out.B, C: out.C }, order, chosen: b.dataset.k, blind, seen, examples: out.examples, checks: out.checks, glossary: out.glossary, rejected: out.rejected } }).catch(() => {}); }; else b.disabled = true; });
     } catch (e) { if (e.name !== 'AbortError') $('.thinking', box).outerHTML = `<p class="clean">${esc(e.message)}</p>`; }
   }
 
@@ -584,6 +591,7 @@
     for (const k of ['A', 'B', 'C']) voicesForm.elements[k + '_freedom'].value = v.freedom[k];
     voicesForm.elements.blind.checked = v.blind;
     voicesForm.elements.description.value = v.description;
+    $('.export', voicesForm).href = '/api/projects/' + encodeURIComponent(v.name) + '/export.zip';
     voicesDlg.showModal();
   };
   $('.reset', voicesForm).onclick = () => {  // freedom back to defaults; the description stays yours

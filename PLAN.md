@@ -96,7 +96,8 @@ Today: translate has glossary + rejected + about; alternatives has rejected + ab
 
 ### Later (needs real picks)
 
-- [ ] Rule ids and fired checks in the pick record. A pick that contradicts a glossary entry, or an accepted analyse hunk that changes a recurring rendering, surfaces the glossary popover prefilled.
+- [x] Fired checks, matched terms and the style in force (rule count, conventions) in the pick record; rule ids when rules get them. (shipped 2026-09-17)
+- [ ] A pick that contradicts a glossary entry, or an accepted analyse hunk that changes a recurring rendering, surfaces the glossary popover prefilled.
 
 ## Baselines (eval/ is gitignored, so the numbers live here)
 - 2026-09-17 `baseline`, qwen38-9b on Ollama, 100 of 270 golden sentences, freedom 0.3/0.7/1.0: retry rate 0.13 extra calls per voice; bad 1 % per voice; length ratio A 1.13 / B 1.11 / C 1.27; chrF A 41.1 / B 40.6 / C 34.8. Two of the three bad outputs were the previous sentence translated along with the target (context bleed), the failure paragraph context must not make worse.

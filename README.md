@@ -17,8 +17,8 @@ uv run uvicorn app:app --reload --port 8765   # http://127.0.0.1:8765
 Data lives in one `store/` directory (`STORE_DIR`): `works/<slug>/{source.md,translation.md}`
 paragraph-aligned, `projects/<name>/translation/{config.md,glossary.yaml,about.md}`, the house
 layer `style.md` + `glossary.yaml` at the root (see "Style guide and glossary"), and
-`picks.jsonl` — one line per variant you clicked, with the two you passed over, for later
-analysis. The store is its own git repository — one commit per save — so back it up by pushing it somewhere.
+`picks.jsonl` — one line per variant you clicked, with the two you passed over, what the code
+checks saw in each, the terms in the prompt and the style in force, for later analysis. The store is its own git repository — one commit per save — so back it up by pushing it somewhere.
 
 ## Deploy
 
@@ -64,7 +64,8 @@ app (web manifest + touch icon, no service worker: the server does the work, not
   saved as `projects/<name>/translation/about.md` (seeded from the project's config the first
   time). The app writes the actual prompt around it: role, rules, output format and the three
   voices (the project's own variant scheme from `config.md` if it has one, else the defaults).
-  The per-voice freedom (temperature) is kept per browser.
+  The per-voice freedom (temperature) is kept per browser. **export as zip** there downloads the
+  project in the store's own layout: its `translation/` folder, its works, and the house files.
 
 ## Style guide and glossary
 
@@ -88,7 +89,8 @@ terms that match the sentence or paragraph (with each term's rationale and the r
 instead of a rejected one); analyse and notes also get the notes prose; check grammar gets the
 conventions line only. A glossary rendering missing from a variant counts against it like a
 rejected term, and the analyse editor is told which renderings are missing so it can propose
-them as hunks. `STYLE_BLOCK=0` sends the glossary lines alone (for before/after runs).
+them as hunks. A saved paragraph that lacks a rendering says so under its English (checked by
+lemma on every save). `STYLE_BLOCK=0` sends the glossary lines alone (for before/after runs).
 
 Adding terms: click a Russian word (or select a phrase) → the popover has *glossary · add*,
 prefilled from your English selection; click an English word → *add for* / *reject for* a head

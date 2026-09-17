@@ -9,6 +9,7 @@ one commit per save.
 
 import asyncio
 import difflib
+import io
 import json
 import math
 import os
@@ -18,6 +19,7 @@ import sys
 import textwrap
 import threading
 import time
+import zipfile
 from collections import Counter
 from functools import cache, lru_cache
 from pathlib import Path
@@ -26,7 +28,7 @@ from typing import Literal
 import httpx
 import yaml
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -105,14 +107,23 @@ def load_work(slug: str) -> dict:
     tr_path = d / "translation.md"
     tr = split_blocks(tr_path.read_text()) if tr_path.exists() else []
     tr = (tr + [""] * len(src))[: len(src)]  # pad/truncate to the source, always aligned
+    project = meta.get("project", "")
     return {
         "slug": slug,
-        "project": meta.get("project", ""),
+        "project": project,
         "title": meta.get("title", ""),
         "source": src,
         "sentences": [split_sentences(b) for b in src],
         "translation": tr,
+        "misses": [block_misses(project or "plain", s, t) for s, t in zip(src, tr)],
     }
+
+
+def block_misses(preset: str, source: str, text: str) -> list[dict]:
+    """Glossary renderings a saved paragraph lacks (nothing for an untranslated one)."""
+    if not text.strip():
+        return []
+    return [{"ru": g["ru"], "en": g["en"]} for g in glossary_misses(glossary_for(preset, source)[0], text)]
 
 
 class NewWork(BaseModel):
@@ -260,7 +271,10 @@ def patch_work(slug: str, body: PatchWork) -> dict:
                 blocks[i : i + 1] = [blocks[i]] + [""] * (len(parts) - 1)
             _write_source(work_dir(slug), meta, src)
         _write_translation(work_dir(slug), blocks)
-    return load_work(slug) if body.source else {"ok": True}
+    if body.source:
+        return load_work(slug)
+    preset = w["project"] or "plain"
+    return {"ok": True, "misses": {i: block_misses(preset, w["source"][i], blocks[i]) for i in body.blocks}}
 
 
 class Pick(BaseModel):
@@ -280,6 +294,9 @@ class Pick(BaseModel):
     blind: bool = False  # draft-blind reveal on: A alone first, B and C on request
     seen: str = "ABC"  # the letters visible when the click came
     examples: list[dict] = []  # the translator's own earlier renderings shown to the model
+    checks: dict = {}  # per voice, what the code checks saw (spelling fixed, glossary missed, …)
+    glossary: list[dict] = []  # the terms and rejected terms that reached the prompt
+    rejected: list[dict] = []
 
 
 class HunkLog(BaseModel):
@@ -307,7 +324,9 @@ def _append_pick(record: dict, message: str) -> None:
 
 @app.post("/api/pick")
 def log_pick(body: Pick) -> dict:
-    _append_pick(body.model_dump(), f"pick: {body.slug} {body.i}.{body.j} {body.chosen}")
+    p = _preset(body.preset) or {}  # the style in force, so a later read can group picks by it
+    style = {"rules": len(p.get("rules", [])), "conventions": p.get("conventions", {})}
+    _append_pick(body.model_dump() | {"style": style}, f"pick: {body.slug} {body.i}.{body.j} {body.chosen}")
     return {"ok": True}
 
 
@@ -536,6 +555,35 @@ def create_project(body: NewProject) -> list[dict]:
     _git_commit(d, f"{body.name}: new project")
     load_presets.cache_clear()
     return get_presets()
+
+
+@app.get("/api/projects/{name}/export.zip")
+def export_project(name: str) -> Response:
+    """The project as a zip in the store's own layout: its translation/ folder, every work under
+    it (the loose works for 'plain'), and the house files it depends on. Unzip into a store."""
+    if not _preset(name):
+        raise HTTPException(404, "no such project")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for f in (STORE_DIR / "style.md", STORE_DIR / "glossary.yaml"):
+            if f.exists():
+                z.write(f, f.name)
+        folder = about_path(name).parent if name != "plain" else None
+        if folder and folder.exists():
+            for f in sorted(folder.rglob("*")):
+                if f.is_file():
+                    z.write(f, str(f.relative_to(STORE_DIR)))
+        for w in list_works():
+            if (w["project"] or "plain") == name:
+                for f in sorted(work_dir(w["slug"]).iterdir()):
+                    z.write(f, str(f.relative_to(STORE_DIR)))
+        if name == "plain" and about_path("plain").exists():
+            z.write(about_path("plain"), str(about_path("plain").relative_to(STORE_DIR)))
+    return Response(
+        buf.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{name}.zip"'},
+    )
 
 
 @app.get("/api/presets")

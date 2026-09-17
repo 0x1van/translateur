@@ -1,6 +1,7 @@
 """Unit checks for the text/preset logic plus one Playwright end-to-end pass against a fake Ollama."""
 
 import asyncio
+import io
 import json
 import os
 import socket
@@ -805,6 +806,10 @@ def test_e2e(page, server_url):
     ta = page.locator(".row").nth(0).locator("textarea.tr")
     assert ta.input_value() == "B of On sidel u okna."
     page.wait_for_function("document.querySelector('#status').textContent.startsWith('saved')")
+    # the saved paragraph lacks both glossary renderings for its Russian: the pane says so
+    page.wait_for_function("!document.querySelector('.row .miss').hidden")
+    assert page.locator(".row").nth(0).locator(".miss").inner_text() == "glossary: жизнь → life · окно → window"
+    assert page.locator(".row").nth(2).locator(".miss").is_hidden()  # nothing translated there
     assert (
         page.locator("#works .work-item.active .prog").inner_text() == "1/3"
     )  # progress follows saves
@@ -1154,6 +1159,12 @@ def test_e2e(page, server_url):
         "t => { t.value = 'He sidel by the window.'; t.dispatchEvent(new Event('input', {bubbles: true})); }"
     )
     page.wait_for_function("document.querySelector('#status').textContent.startsWith('saved')")
+    page.wait_for_function("document.querySelector('.row .miss').textContent === 'glossary: жизнь → life'")
+    # the pick carried what the checks saw and the terms in the prompt; the server added the style in force
+    picks = [json.loads(x) for x in (STORE / "picks.jsonl").read_text().splitlines()]
+    first = next(p for p in picks if p.get("slug") == "demo-work" and "chosen" in p)
+    assert first["checks"]["A"]["missed"] == 1 and first["glossary"][0]["ru"] == "окно"
+    assert first["style"] == {"rules": 3, "conventions": appmod.conventions_of("demo")}
     page.keyboard.press("Escape")
     en0.locator(".w", has_text="sidel").click()
     page.wait_for_selector("#pop form.gl select")
@@ -1180,3 +1191,27 @@ def test_e2e(page, server_url):
         ) in gpath.read_text()
     gpath.write_text(before)
     appmod.load_presets.cache_clear()
+
+
+def test_export_project_zip():
+    import zipfile
+
+    from fastapi.testclient import TestClient
+
+    appmod.create_work(appmod.NewWork(slug="exp-work", source="Раз.", project="demo", title="X"))
+    try:
+        c = TestClient(appmod.app)
+        r = c.get("/api/projects/demo/export.zip")
+        assert r.status_code == 200 and r.headers["content-disposition"].endswith('"demo.zip"')
+        names = zipfile.ZipFile(io.BytesIO(r.content)).namelist()
+        assert {"style.md", "glossary.yaml", "projects/demo/translation/config.md"} <= set(names)
+        assert "works/exp-work/source.md" in names and "works/exp-work/translation.md" in names
+        assert not any(n.startswith("works/golden") for n in names)  # a loose work: not demo's
+        assert c.get("/api/projects/nope/export.zip").status_code == 404
+        loose = zipfile.ZipFile(io.BytesIO(c.get("/api/projects/plain/export.zip").content)).namelist()
+        assert "works/golden/source.md" in loose and "works/exp-work/source.md" not in loose
+        assert appmod.load_work("exp-work")["misses"] == [[]]  # untranslated: nothing missing
+    finally:
+        import shutil
+
+        shutil.rmtree(appmod.work_dir("exp-work"))
