@@ -54,14 +54,49 @@ Key dependency: nothing in bucket 2–4 can be verified without (a) a picks log 
 
 ## Sprint 4 — style guide, spelling conventions, glossary in two layers (from the 2026-09-17 style research)
 
-Source: ~/Documents/Translation_Style_Guides_Glossaries_Research_20260917/research_report_20260917_style_guide_glossary_translateur.md. Design: house layer in `store/`, project layer overrides by heading; the model sees a short compiled rules block plus per-sentence glossary lines; conventions are checked in code, not asked for in prose.
+Source: ~/Documents/Translation_Style_Guides_Glossaries_Research_20260917/research_report_20260917_style_guide_glossary_translateur.md. Design: house layer in `store/`, project layer overrides by heading; every model call gets the same compiled block through one function; conventions are checked in code, not asked for in prose. All of it this sprint; the golden run after the compiled block is the checkpoint.
 
-- [ ] House layer: `store/style.md` (voice paragraph; `## Conventions` as declared values `spelling: en-GB-ise|en-GB-oxendict`, `quotes: single|double`, `dash: spaced-en|em`; `## Rules` ≤ 15 positive one-topic lines, one example each; `## Notes` free prose) and `store/glossary.yaml` (names, transliteration policy, house terms; same schema as the project file). Absent files = today's behaviour.
-- [ ] Project override by heading in `load_presets()`: a `##` heading in `config.md` replaces the house heading of the same name, the rest inherit (same semantic as the letter-by-letter `Variant scheme`). Glossaries merge, project wins on the same `russian` head; `rejected` lists concatenate. `PROJECT_TEMPLATE` gains `## Departures from house style`.
-- [ ] Compiled rules block in the system prompt: Conventions (one line, locale tag as the value) + Rules, house then project, placed before the per-sentence glossary lines so the prefix stays cacheable; `about.md` unchanged. Log a warning when more than ~20 rules reach the translate call. Term lines gain `use_instead` beside each rejected term and a one-line `rationale` / `first_used` when present. Paragraph passes (`analyse`, `notes`) get the `## Notes` prose too.
-- [ ] Conventions in code: `fetch_data.py` pulls VarCon; a table keyed on the declared variant replaces the 35-word `UK` map in app.js and drives (a) pane markers, (b) a badness point on model output, (c) a counter in the golden run. Quote and dash checks from the other two declared values. English-side glossary check: preferred rendering or an admitted alternative present by lemma, else +1 badness and a pane marker.
-- [ ] Gate: `eval_golden.py compare` prints per-rule counters (glossary hit rate over matched entries, rejected hits, spelling violations per 1k words, quote/dash violations) next to chrF; run with and without the compiled block; keep under the usual rule (no voice's win-share CI below 50 %, bad/retry flat, counters not worse). No LLM judge for compliance.
-- [ ] Later, after real picks: rule ids and fired checks in the pick record; one-click "add to glossary" from an accepted analyse hunk or a pick that contradicts a glossary entry (`first_used` = work slug).
+### What reaches which call (the contract)
+
+| call | rules block | conventions line | glossary terms | rejected terms (+ use_instead) | about.md | `## Notes` prose |
+|---|---|---|---|---|---|---|
+| translate A/B/C | yes | yes | per sentence | per sentence | yes | no |
+| alternatives (word popover) | yes | yes | per sentence | per sentence | yes | no |
+| analyse | yes | yes | per paragraph | per paragraph | yes | yes |
+| notes | yes | yes | per paragraph | per paragraph | yes | yes |
+| check grammar | no (its brief is "do not touch style") | yes | no | no | no | no |
+
+Today: translate has glossary + rejected + about; alternatives has rejected + about only; analyse/notes have glossary + about only; grammar has nothing.
+
+### Files
+
+- [ ] House layer: `store/style.md` — voice paragraph; `## Conventions` as declared values (`spelling: en-GB-ise | en-GB-oxendict`, `quotes: single | double`, `dash: spaced-en | em`, `dialogue: quotes | dash`); `## Rules` ≤ 15 positive one-topic lines, one example each; `## Notes` free prose. `store/glossary.yaml` — names, transliteration policy, house terms, house rejected terms; same schema as the project file. Absent files = today's behaviour. Both in `store/`, so they travel with the store's git.
+- [ ] Project override by heading in `load_presets()`: merge `_sections()` of house `style.md` with the project's `config.md`, project wins per `##` heading, the rest inherit (same semantic as the letter-by-letter `Variant scheme`). Glossaries merge, project wins on the same `russian` head; `rejected` lists concatenate. `PROJECT_TEMPLATE` gains `## Conventions`, `## Rules` and `## Departures from house style`. Existing sections of the two real configs are left alone; only headings named here are compiled.
+
+### Prompt
+
+- [ ] One function `style_block(preset, text) -> dict` returning `conventions` (one line, IETF tag as the value), `rules` (house then project), `glossary` and `rejected` for `text` (sentence or paragraph), `notes`. Every call above builds its system prompt from it; `system_prompt()` loses its ad hoc glossary lines. Block placed before the per-text lines so the prefix stays cacheable. Log a warning when more than ~20 rule lines reach a call.
+- [ ] Term lines: `ru → en` plus a one-line `rationale` and `first_used` when present; rejected lines carry `use_instead` so the negative always travels with its positive. Grammar gets the conventions line only.
+
+### Glossary editing (no write path exists today)
+
+- [ ] `POST /api/glossary` `{project, russian, english, kind: vocabulary|rejected, note}`: appends to the project's `glossary.yaml`, or to `store/glossary.yaml` when `project` is empty; `first_used` = the open work's slug; same head updates instead of duplicating; commits in the store repo like a save; `load_presets.cache_clear()`.
+- [ ] Russian pane: the word popover gains "glossary: [english] add", prefilled from the current English selection if any; a phrase selection in the Russian pane opens the same popover for the span (multi-word heads).
+- [ ] English pane: the word/phrase popover gains "add for [ru]" and "reject for [ru]", `ru` = the aligned sentence's single lemma match, else a short pick list from that sentence's words.
+- [ ] Not built: model-extracted candidate terms (TransAgents' over-generate-then-prune gave generic glossaries; picks are the better signal, see Later).
+
+### Checks in code
+
+- [ ] `fetch_data.py` pulls VarCon; a parser emits two tables (B = -ise, Z = Oxford -ize) keyed on the declared `spelling`. The table replaces the 35-word `UK` map in `static/app.js` and drives (a) pane markers, (b) +1 badness on model output, (c) a counter in the golden run. Quote and dash checks from `quotes`/`dash`/`dialogue` the same three ways.
+- [ ] English-side glossary check: for each matched entry, the preferred rendering or an admitted alternative present in the output by lemma, else +1 badness and a pane marker (reuses the lemma matching in `glossary_for()`). The analyse editor receives the misses so it can propose the fix as a hunk.
+
+### Gate
+
+- [ ] `eval_golden.py compare` prints per-rule counters next to chrF: glossary hit rate over matched entries, rejected hits, spelling violations per 1k words, quote/dash violations. Run with and without the compiled block on the same 100; keep under the usual rule (no voice's win-share CI below 50 %, bad/retry flat, counters not worse). No LLM judge for compliance. Checkpoint: stop here for a read before the VarCon and glossary-edit work lands.
+
+### Later (needs real picks)
+
+- [ ] Rule ids and fired checks in the pick record. A pick that contradicts a glossary entry, or an accepted analyse hunk that changes a recurring rendering, surfaces the glossary popover prefilled.
 
 ## Baselines (eval/ is gitignored, so the numbers live here)
 - 2026-09-17 `baseline`, qwen38-9b on Ollama, 100 of 270 golden sentences, freedom 0.3/0.7/1.0: retry rate 0.13 extra calls per voice; bad 1 % per voice; length ratio A 1.13 / B 1.11 / C 1.27; chrF A 41.1 / B 40.6 / C 34.8. Two of the three bad outputs were the previous sentence translated along with the target (context bleed), the failure paragraph context must not make worse.
