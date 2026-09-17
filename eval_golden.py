@@ -88,7 +88,8 @@ async def run(name: str, model: str, n: int, freedom: dict[str, float]) -> None:
             try:
                 return await real(*a, **kw)
             except appmod.HTTPException as e:
-                if e.status_code != 502 or wait is None:
+                transient = "429" in str(e.detail) or "Server error" in str(e.detail)
+                if not transient or wait is None:
                     raise
                 print(f"\n{str(e.detail)[:120]} → retry in {wait}s", file=sys.stderr)
                 await asyncio.sleep(wait)
@@ -128,7 +129,7 @@ async def run(name: str, model: str, n: int, freedom: dict[str, float]) -> None:
         await asyncio.gather(*(one(it) for it in items))
     finally:
         appmod.llm_json = real
-        print(f"\n{len(load(name))} items in {path}", file=sys.stderr)
+        print(f"\n{len(load(name)) if path.exists() else 0} items in {path}", file=sys.stderr)
     stats(name)
 
 

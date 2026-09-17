@@ -13,6 +13,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import threading
 import time
 from functools import cache
@@ -491,6 +492,10 @@ CHECK_SCHEMA = _schema(
 )
 
 
+_MINIMAL_REASONING = {"reasoning": {"effort": "minimal"}}  # OpenRouter's form, a few tokens
+_NO_REASONING_FLAG: set[str] = set()  # models whose endpoint refuses `reasoning_effort: none`
+
+
 class BadOutput(HTTPException):
     """The model's reply was not the JSON asked for — typically a sample that started looping
     and hit the output cap mid-string. Worth one more sample, not a failure of the whole request."""
@@ -513,17 +518,30 @@ async def llm_json(
         },
         # OpenRouter and Ollama's /v1 both honour this; OpenRouter's own {"reasoning": {...}} form
         # makes Ollama think anyway and burn the token cap, so it is not sent by default
-        "reasoning_effort": "none",
+        **(_MINIMAL_REASONING if model in _NO_REASONING_FLAG else {"reasoning_effort": "none"}),
         **LLM_EXTRA,
     }
     headers = {"Authorization": f"Bearer {LLM_API_KEY}"} if LLM_API_KEY else {}
+    url = f"{LLM_BASE_URL}/chat/completions"
     async with httpx.AsyncClient(timeout=300) as c:
         try:
-            r = await c.post(f"{LLM_BASE_URL}/chat/completions", json=payload, headers=headers)
+            r = await c.post(url, json=payload, headers=headers)
+            if (
+                r.status_code == 400
+                and "reasoning" in r.text.lower()
+                and "reasoning_effort" in payload
+            ):
+                # some endpoints (GLM on Together) cannot switch thinking off, and left to
+                # themselves they think past the token cap; "minimal" keeps it to a few tokens
+                _NO_REASONING_FLAG.add(model)
+                del payload["reasoning_effort"]
+                r = await c.post(url, json=payload | _MINIMAL_REASONING, headers=headers)
             r.raise_for_status()
         except httpx.HTTPError as e:
             raise HTTPException(502, f"model endpoint: {e}") from e
     data = r.json()
+    if os.environ.get("LLM_DEBUG"):  # raw choice, for a model that misbehaves on the real prompt
+        print(json.dumps(data.get("choices"), ensure_ascii=False)[:600], file=sys.stderr)
     if "error" in data:  # OpenRouter reports routing failures inside a 200
         raise HTTPException(502, f"model endpoint: {data['error']}")
     content = (data.get("choices") or [{}])[0].get("message", {}).get("content") or ""

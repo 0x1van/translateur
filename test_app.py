@@ -49,6 +49,9 @@ class FakeOllama(BaseHTTPRequestHandler):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         assert 0 < body["max_tokens"] < 5000  # every call carries a hard output cap
+        if body["model"] == "fake-2b" and "reasoning_effort" in body:  # a thinking-only endpoint
+            self._send({"error": {"message": "Reasoning is mandatory", "code": 400}}, 400)
+            return
         assert body["response_format"]["json_schema"]["schema"]["additionalProperties"] is False
         system = body["messages"][0]["content"]
         user = body["messages"][1]["content"]
@@ -89,9 +92,9 @@ class FakeOllama(BaseHTTPRequestHandler):
                 out = {"text": f"{k} of {translit(sent)}{tag}"}
         self._send({"choices": [{"message": {"content": json.dumps(out)}}]})
 
-    def _send(self, obj):
+    def _send(self, obj, status=200):
         data = json.dumps(obj).encode()
-        self.send_response(200)
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
@@ -231,6 +234,12 @@ def test_picks_are_logged_and_committed():
         check=False,
     ).stdout.strip()
     assert log == "pick: w 0.1 B", log
+
+
+def test_reasoning_flag_dropped_for_endpoints_that_refuse_it():
+    call = appmod.llm_json("fake-2b", "sys", "<<< Да. >>>\nVoice A", appmod.VARIANT_SCHEMA, 0.3, 50)
+    assert asyncio.run(call) == {"text": "A of Da."}
+    assert "fake-2b" in appmod._NO_REASONING_FLAG  # and the next call does not pay the 400
 
 
 def test_eval_golden(tmp_path, monkeypatch):
