@@ -302,12 +302,14 @@
       const out = await api('/api/translate', { method: 'POST', signal: ctl.signal, body: {
         model: modelSel.value, preset: v.name, description: v.description, freedom,
         sentence: sents[j], prev_ru, prev_en, next_ru, guidance } });
-      $('.thinking', box).outerHTML = ['A', 'B', 'C'].map(k =>
+      // shuffled per card: a pick then says which voice won, not which button was leftmost
+      const order = ['ABC', 'ACB', 'BAC', 'BCA', 'CAB', 'CBA'][Math.floor(Math.random() * 6)];
+      $('.thinking', box).outerHTML = [...order].map(k =>
         `<button type="button" class="variant" data-k="${k}"><b>${k}</b><small>${esc((v.voices[k] || '').split(':')[0])} · ${esc(v.freedom[k])}</small>${out[k] ? esc(out[k]) : '<i class="none">no usable output · try again</i>'}</button>`).join('') +
         (out.glossary.length || out.rejected.length ? `<p class="glossary">${
           out.glossary.map(g => `${esc(g.ru)} → ${esc(g.en)}`).join(' · ')}${
           out.rejected.map(r => ` · not “${esc(r.en)}”`).join('')}</p>` : '');
-      box.querySelectorAll('.variant').forEach(b => { if (out[b.dataset.k]) b.onclick = () => insert(row, out[b.dataset.k], target, slot); else b.disabled = true; });
+      box.querySelectorAll('.variant').forEach(b => { if (out[b.dataset.k]) b.onclick = () => { insert(row, out[b.dataset.k], target, slot); api('/api/pick', { method: 'POST', body: { slug: work.slug, i, j, model: modelSel.value, preset: v.name, freedom, sentence: sents[j], guidance, variants: { A: out.A, B: out.B, C: out.C }, order, chosen: b.dataset.k } }).catch(() => {}); }; else b.disabled = true; });
     } catch (e) { if (e.name !== 'AbortError') $('.thinking', box).outerHTML = `<p class="clean">${esc(e.message)}</p>`; }
   }
 
@@ -494,6 +496,12 @@
       await api('/api/works', { method: 'POST', body: { slug: f.get('slug'), source: '', project: project === 'plain' ? '' : project, title: f.get('title') } });
       newDlg.close(); showNewProject(false); await refreshWorks(); await openWork(f.get('slug'));
     } catch (err) { setStatus(err.message, true); }
+  };
+  $('#copy-btn').onclick = async () => {
+    if (!work) return setStatus('no work open', true);
+    // what is on screen, not what is saved: an edit in progress is still the current text
+    const text = [...grid.querySelectorAll('textarea.tr')].map(t => t.value.trim()).filter(Boolean).join('\n\n');
+    try { await navigator.clipboard.writeText(text); setStatus('copied ·'); } catch (e) { setStatus(e.message, true); }
   };
   $('#voices-btn').onclick = () => {
     const v = currentVoice();

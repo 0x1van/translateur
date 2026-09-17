@@ -2,8 +2,9 @@
 
 Models: any OpenAI-compatible chat endpoint (OpenRouter hosted, Ollama at home). Data: one
 `store/` directory — `works/<slug>/{source.md,translation.md}` (paragraph blocks paired by
-index) and `projects/<name>/translation/{config.md,glossary.yaml,about.md}` — versioned as its
-own git repository, one commit per save.
+index), `projects/<name>/translation/{config.md,glossary.yaml,about.md}` and `picks.jsonl` (every
+variant the translator chose, with the two they didn't) — versioned as its own git repository,
+one commit per save.
 """
 
 import asyncio
@@ -13,6 +14,7 @@ import os
 import re
 import subprocess
 import threading
+import time
 from functools import cache
 from pathlib import Path
 
@@ -253,6 +255,44 @@ def patch_work(slug: str, body: PatchWork) -> dict:
             _write_source(work_dir(slug), meta, src)
         _write_translation(work_dir(slug), blocks)
     return load_work(slug) if body.source else {"ok": True}
+
+
+class Pick(BaseModel):
+    """One variant chosen from a card: everything needed to study the choice later."""
+
+    slug: str
+    i: int  # paragraph
+    j: int  # sentence within it
+    model: str
+    preset: str
+    freedom: dict[str, float] = {}
+    sentence: str  # the Russian sentence
+    guidance: str = ""
+    variants: dict[str, str]  # A/B/C as shown
+    order: str = "ABC"  # left-to-right display order, so position bias can be separated from voice
+    chosen: str  # the letter clicked
+
+
+@app.post("/api/pick")
+def log_pick(body: Pick) -> dict:
+    """Append-only `picks.jsonl` in the store, one line per click, committed like a save."""
+    # ponytail: a flat jsonl; load it into pandas/duckdb when there is something to analyse
+    line = json.dumps({"at": int(time.time()), **body.model_dump()}, ensure_ascii=False)
+    with _WRITE_LOCK:
+        STORE_DIR.mkdir(parents=True, exist_ok=True)
+        with (STORE_DIR / "picks.jsonl").open("a") as f:
+            f.write(line + "\n")
+        _git_commit(STORE_DIR / "picks.jsonl", f"pick: {body.slug} {body.i}.{body.j} {body.chosen}")
+    return {"ok": True}
+
+
+@app.get("/api/picks")
+def picks() -> FileResponse:
+    """The raw log, as text: the browser shows it, select-all copies it, curl saves it."""
+    path = STORE_DIR / "picks.jsonl"
+    if not path.exists():
+        raise HTTPException(404, "no picks yet")
+    return FileResponse(path, media_type="text/plain; charset=utf-8")
 
 
 # ---------- presets (voices from projects/*/translation/config.md) ----------

@@ -215,11 +215,13 @@ def test_picks_are_logged_and_committed():
         preset="plain",
         sentence="Да.",
         variants={"A": "Yes.", "B": "Yea.", "C": "Aye."},
+        order="CBA",
         chosen="B",
     )
     appmod.log_pick(pick)
     line = json.loads((STORE / "picks.jsonl").read_text().splitlines()[-1])
     assert line["chosen"] == "B" and line["variants"]["C"] == "Aye." and line["at"] > 0
+    assert line["order"] == "CBA"
     log = subprocess.run(
         ["git", "log", "-1", "--format=%s", "--", "picks.jsonl"],
         cwd=STORE,
@@ -457,10 +459,10 @@ def test_e2e(page, server_url):
     # sentence → three variants → pick B → lands in the paired pane and is saved
     page.locator(".row").nth(0).locator(".n").nth(0).click()
     page.wait_for_selector(".variant")
-    variants = page.locator(".variant").all_inner_texts()
-    assert variants[0].endswith("A of On sidel u okna. (glossed)")  # glossary reached the prompt
-    assert "Literal (control) · strict" in variants[0] and "free" in variants[2]  # voice · freedom
-    assert variants[2].endswith("C of On sidel u okna.")  # the echoed Russian was retried cooler
+    vt = {k: page.locator(f".variant[data-k={k}]").inner_text() for k in "ABC"}  # order is shuffled
+    assert vt["A"].endswith("A of On sidel u okna. (glossed)")  # glossary reached the prompt
+    assert "Literal (control) · strict" in vt["A"] and "free" in vt["C"]  # voice · freedom
+    assert vt["C"].endswith("C of On sidel u okna.")  # the echoed Russian was retried cooler
     assert page.locator(".variants .glossary").inner_text().startswith("окно → window")
     page.locator(".variant[data-k=B]").click()
     ta = page.locator(".row").nth(0).locator("textarea.tr")
