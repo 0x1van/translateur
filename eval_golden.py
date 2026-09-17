@@ -78,7 +78,14 @@ async def run(name: str, model: str, n: int, freedom: dict[str, float]) -> None:
 
     async def counted(*a, **kw):  # a retry is any call past the first three of an item
         calls[_ITEM.get()] += 1
-        return await real(*a, **kw)
+        for wait in (5, 20, 60, None):  # upstream 429/5xx: wait it out rather than lose the run
+            try:
+                return await real(*a, **kw)
+            except appmod.HTTPException as e:
+                if e.status_code != 502 or wait is None:
+                    raise
+                print(f"\n{str(e.detail)[:120]} → retry in {wait}s", file=sys.stderr)
+                await asyncio.sleep(wait)
 
     appmod.llm_json = counted
     sem = asyncio.Semaphore(CONCURRENCY)
