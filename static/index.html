@@ -17,11 +17,11 @@
 </head>
 <body>
 <header class="bar">
-  <span class="brand">translateur</span>
+  <a class="brand" href="/" title="translateur"><img src="/static/icon-192.png" alt="translateur"></a>
   <label>project <select id="preset"></select></label>
   <button id="voices-btn" type="button" title="project settings" aria-label="project settings">&#9881;&#xFE0E;</button>
   <button id="copy-btn" type="button" title="copy the whole English text">copy english</button>
-  <a href="/api/picks" target="_blank" title="every variant you chose, one JSON line each">choices</a>
+  <a class="btn" href="/api/picks" target="_blank" title="every variant you chose, one JSON line each">choices</a>
   <button id="theme-btn" type="button" aria-label="Toggle dark theme">dark</button>
   <span id="status" class="status" aria-live="polite"></span>
 </header>
@@ -62,7 +62,7 @@
       <label>C freedom <select name="C_freedom"></select></label>
     </div>
     <label class="check"><input type="checkbox" name="blind"> show A alone first, B and C on request (draft-blind)</label>
-    <div class="row-end"><a class="export" download title="the project's files and works, in the store's layout">export as zip</a><button type="button" class="reset">reset</button><button type="button" class="cancel">cancel</button><button value="ok">save</button></div>
+    <div class="row-end"><a class="btn export" download title="the project's files and works, in the store's layout">export as zip</a><button type="button" class="reset">reset</button><button type="button" class="cancel">cancel</button><button value="ok">save</button></div>
   </form>
 </dialog>
 

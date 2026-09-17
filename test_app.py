@@ -896,6 +896,20 @@ def test_e2e(page, server_url):
     assert en0.locator(".w").first.inner_text() == "B"
     assert en0.locator(".n").all_inner_texts() == ["1", "2"]  # numbered like the russian
     assert not en0.evaluate("p => p.classList.contains('off')")  # 2 sentences vs 2: aligned
+    # sentence focus: hovering russian sentence 2 keeps its english twin, fades the rest of the row
+    row0 = page.locator(".row").nth(0)
+    row0.locator(".cell.src .sent").nth(1).hover()
+    assert row0.evaluate("r => [...r.querySelectorAll('.sent.hot')].map(s => s.closest('.cell').className)") == ["cell src", "cell tr"]
+    assert row0.evaluate("r => r.classList.contains('focus')")
+    page.wait_for_function("getComputedStyle(document.querySelector('.row .cell.tr .sent')).opacity === '0.4'")  # after the transition
+    page.mouse.move(0, 0)
+    assert row0.evaluate("r => r.querySelectorAll('.hot').length") == 0
+    # while editing, the caret picks the pair instead
+    en0.click(position={"x": 4, "y": 8})
+    row0.locator("textarea.tr").evaluate("t => t.setSelectionRange(t.value.length, t.value.length)")
+    page.wait_for_function("document.querySelector('.row .cell.src .sent[data-j=\"1\"]').classList.contains('hot')")
+    page.keyboard.press("Escape")
+    assert row0.evaluate("r => r.querySelectorAll('.hot').length") == 0
     en2 = page.locator(".row").nth(2).locator("p.en")
     ta2 = page.locator(".row").nth(2).locator("textarea.tr")
     assert ta2.is_hidden()

@@ -42,11 +42,12 @@ body {
   font-family: var(--font-serif); font-size: 1.05rem; line-height: 1.7;
 }
 button, select, input, textarea { font: inherit; color: inherit; }
-button {
+button, a.btn {
   font-family: var(--font-mono); font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase;
   background: none; border: 1px solid var(--color-border); padding: 0.25rem 0.6rem; cursor: pointer;
 }
-button:hover { border-color: var(--color-accent-dim); box-shadow: inset 0 -2px 0 var(--color-accent); }
+a.btn { text-decoration: none; display: inline-block; color: inherit; }
+button:hover, a.btn:hover { border-color: var(--color-accent-dim); box-shadow: inset 0 -2px 0 var(--color-accent); }
 select, input { border: 1px solid var(--color-border); background: var(--color-bg-alt); padding: 0.2rem 0.4rem; }
 
 /* ---- chrome ---- */
@@ -58,7 +59,8 @@ select, input { border: 1px solid var(--color-border); background: var(--color-b
 }
 .bar label { display: flex; align-items: center; gap: var(--space-xs); color: var(--color-text-muted); }
 .bar select { font-size: 0.7rem; text-transform: none; letter-spacing: 0; max-width: 14rem; }
-.brand { margin-right: auto; }
+.brand { margin-right: auto; display: flex; }
+.brand img { width: 1.5rem; height: 1.5rem; border-radius: 4px; }
 #voices-btn { font-size: 1rem; line-height: 1; padding: 0.15rem 0.5rem; }
 .status { color: var(--color-text-muted); min-width: 6rem; text-align: right; }
 .status.err { color: var(--color-error); }
@@ -105,6 +107,9 @@ select, input { border: 1px solid var(--color-border); background: var(--color-b
 .cell p { margin: 0 0 var(--space-sm); }
 .sent { border-radius: 2px; }
 .sent.active { box-shadow: inset 0 -2px 0 var(--color-accent); }
+/* sentence focus: the pair under the pointer (or the caret) stays; the rest of the row fades */
+.sent { transition: opacity .15s; }
+.row.focus .sent:not(.hot) { opacity: .4; }
 .n {
   font-family: var(--font-mono); font-size: 0.6rem; color: var(--color-text-muted);
   cursor: pointer; margin-right: 0.25em; padding: 0 0.15em; vertical-align: super; line-height: 0;
@@ -149,7 +154,7 @@ textarea.src:focus { outline: none; }
 .more menu button:disabled { color: var(--color-border); cursor: default; background: none; }
 .issues { font-size: 0.9rem; }
 .cell.tr p.miss { font-size: 0.8rem; color: var(--color-text-muted); margin: 0.2rem 0 0; }
-.row-end a.export { margin-right: auto; font-size: 0.85rem; align-self: center; }
+.row-end .export { margin-right: auto; }
 .issue {
   display: block; width: 100%; text-align: left; text-transform: none; letter-spacing: 0;
   font-family: var(--font-serif); font-size: 0.9rem; border: 0; border-left: 2px solid var(--color-accent);
@@ -236,6 +241,6 @@ dialog select { font-family: var(--font-mono); font-size: 0.7rem; }
 @media (hover: none) {
   .more summary { color: var(--color-text-muted); }
   .n { font-size: 0.7rem; padding: 0.6em 0.4em; }
-  .bar button, .tree-head button { padding: 0.45rem 0.7rem; }
+  .bar button, .bar .btn, .tree-head button { padding: 0.45rem 0.7rem; }
   .work-item { padding: 0.4rem 0.5rem; }
 }

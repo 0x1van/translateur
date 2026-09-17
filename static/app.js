@@ -182,7 +182,7 @@
     let n = n0, html = '', last = 0;
     for (const m of [...v.matchAll(EN_BOUND), null]) {
       const end = m ? m.index + m[1].length : v.length;
-      html += `<sup class="n en">${n++}</sup>` + tok(v.slice(last, end), last);
+      html += `<span class="sent" data-j="${n - n0}"><sup class="n en">${n++}</sup>${tok(v.slice(last, end), last)}</span>`;
       if (m) { html += tok(v.slice(end, m.index + m[0].length), end); last = m.index + m[0].length; }
     }
     p.innerHTML = html;
@@ -211,8 +211,27 @@
     const ta = e.target, c = ta.closest('.cell.tr');
     ta.sel = [ta.selectionStart, ta.selectionEnd];  // caret or selection, surviving the blur a button click causes
     if (c.hold) { c.hold = false; setTimeout(() => ta.focus()); return; }
-    c.classList.remove('editing'); view(c);
+    c.classList.remove('editing'); view(c); focusSent();
   });
+  /* Sentence focus: the sentence under the pointer, else the one the caret is in while editing,
+     keeps its ink on both sides of the row; the rest fades, so the pair reads together. */
+  let hover = null;
+  function focusSent() {
+    const ta = document.activeElement?.matches?.('textarea.tr') ? document.activeElement : null;
+    let row = hover?.closest('.row'), j = hover ? +hover.dataset.j : -1;
+    if (!hover && ta) {
+      const spans = enSpans(ta.value);
+      row = ta.closest('.row'); j = spans.findIndex(s => ta.selectionStart <= s.b);
+      if (j < 0) j = spans.length - 1;
+    }
+    grid.querySelectorAll('.focus, .hot').forEach(el => el.classList.remove('focus', 'hot'));
+    if (!row || j < 0) return;
+    row.classList.add('focus');
+    row.querySelectorAll(`.sent[data-j="${j}"]`).forEach(s => s.classList.add('hot'));
+  }
+  grid.addEventListener('pointerover', e => { hover = e.target.closest('.sent'); focusSent(); });
+  grid.addEventListener('pointerleave', () => { hover = null; focusSent(); });
+  document.addEventListener('selectionchange', focusSent);
 
   /* The Russian is editable too: click past the words, type or paste, click away (or Escape).
      A blank line splits the paragraph; the translation stays with the first part. */
@@ -280,7 +299,7 @@
 
   // ---------- sentence → variants ----------
   grid.addEventListener('click', e => {
-    const n = e.target.closest('.sent .n');  // the English numbers are labels, not buttons
+    const n = e.target.closest('.sent .n:not(.en)');  // the English numbers are labels, not buttons
     if (n) return translateSentence(n.closest('.sent'));
     const en = e.target.closest('p.en');
     if (en) {
