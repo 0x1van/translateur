@@ -26,6 +26,11 @@ never replace the symlink with a real file.
   take a deliberate shortcut.
 - Model output is untrusted: keep the Cyrillic-leak, overrun and JSON-schema checks on every
   model call.
+- Any change to a prompt, temperature or context field is gated by the golden set: run
+  `eval_golden.py run <name>` before and after, `compare` them, keep only if no voice's delta is
+  negative and bad/retry rates do not rise. Recipe and results table: README "Evaluating".
+  Reference run for the current default model: `eval/deepseek-pro.jsonl`. Needs a real model
+  and `set -a; source .env; set +a`; a run is ~$0.15 on DeepSeek Pro.
 
 ## Boundaries
 
