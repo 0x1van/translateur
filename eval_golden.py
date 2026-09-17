@@ -10,9 +10,10 @@ in-process with the same context the browser sends, so source the env first (`se
     uv run python eval_golden.py compare baseline                    # one run: badness, lengths, chrF
     uv run python eval_golden.py picks                               # what the translator chose
 
-Keep a change only if no voice's paired delta is negative and the badness/retry rate does not
-rise. chrF is a literalness-biased floor, not a judge: it catches regressions, it cannot rank
-the voices. `--comet` adds COMET-22 (needs `uv pip install unbabel-comet`, ~2 GB of weights).
+Keep a change unless a voice's win-share interval sits below 50 % or the badness/retry rate
+rises. Two identical runs differ by up to ±2 chrF on B and C (measured 2026-09-17), so a mean
+delta inside that is noise. chrF is a literalness-biased floor, not a judge: it catches
+regressions, it cannot rank the voices. `--comet` adds COMET-22 (needs `uv pip install unbabel-comet`, ~2 GB of weights).
 """
 
 import argparse

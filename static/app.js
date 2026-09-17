@@ -11,7 +11,7 @@
   const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
   /* "freedom" = sampling temperature with a name the translator can reason about. */
-  const FREEDOM = { strict: 0.3, measured: 0.7, free: 1.0 };  // hotter than 1.0 stops being translation
+  const FREEDOM = { strict: 0.1, measured: 0.7, free: 0.8 };  // hotter than 0.8 stops being translation
   const DEFAULT_FREEDOM = { A: 'strict', B: 'measured', C: 'free' };
 
   let work = null, presets = [];

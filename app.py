@@ -44,7 +44,7 @@ DEFAULT_VOICES = {
     "B": "Literary British English: faithful, precise, unshowy; keeps sentence length and rhythm.",
     "C": "Alternative literary phrasing: a different cadence or subtler word, same register.",
 }
-DEFAULT_FREEDOM = {"A": 0.3, "B": 0.7, "C": 1.0}  # sampling temperature per voice
+DEFAULT_FREEDOM = {"A": 0.1, "B": 0.7, "C": 0.8}  # sampling temperature per voice
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 _BOUNDARY_RE = re.compile(r'([.!?…]["»”)]*)\s+(?=[«"“(]?[A-ZА-ЯЁ]|[—–-]\s+[«"“(]?[A-ZА-ЯЁ])')
 
@@ -683,10 +683,7 @@ async def translate(req: TranslateReq) -> dict:
 
         text = await sample(temp)
         bad = badness(text, req.sentence)
-        for t in (
-            min(temp, 0.6),
-            0.4,
-        ):  # looped, echoed, half-translated or riffing: calmer retries
+        for t in (min(temp, 0.4), 0.0):  # looped, echoed or riffing: retries never hotter
             if not bad:
                 break
             again = await sample(t)

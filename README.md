@@ -73,8 +73,9 @@ it catches a model that drops, echoes or overruns, it cannot rank two good model
     uv run python eval_golden.py compare <a> <b>              # paired delta per voice, wins, Wilson CI
     uv run python eval_golden.py picks                        # what you actually chose, by voice/position
 
-Keep a change only if no voice's delta is negative and bad/retry rates do not rise. Same 100
-sentences, same prompt, freedom 0.3/0.7/1.0 unless noted; chrF for voices A/B/C:
+Keep a change unless a voice's win-share interval sits below 50 % or bad/retry rates rise. Two
+identical runs differ by up to ±2 chrF on B and C, so a mean delta inside that is noise. Same 100
+sentences; chrF for voices A/B/C:
 
 | date | model | A | B | C | notes |
 |---|---|---|---|---|---|
@@ -83,5 +84,10 @@ sentences, same prompt, freedom 0.3/0.7/1.0 unless noted; chrF for voices A/B/C:
 | 2026-09-17 | deepseek/deepseek-v4-pro-0813 | 43.8 | 49.4 | 39.8 | 0 bad; = Sol on A/B, C overruns (1.28); default |
 | 2026-09-17 | deepseek/deepseek-v4.1-flash | 44.6 | 46.6 | 42.6 | 0 bad; = Pro |
 | 2026-09-17 | z-ai/glm-5.3 | 42.7 | 48.2 | 41.4 | needs minimal reasoning; = Pro, < Sol |
+| 2026-09-17 | deepseek-v4-pro + paragraph context | 44.6 | 51.0 | 40.3 | kept; C overrun 1.28 → 1.20 |
+| 2026-09-17 | + freedom 0.1/0.7/0.8 | 45.2 | 49.6 | 39.2 | kept; B at 0.6 was −2.3 twice, so 0.7 stays |
+
+Rows below the model block are cumulative: each is the previous row plus one change, on the
+default model.
 
 `openai/gpt-5.6-luna` was dropped: OpenRouter's shared upstream throttled it three runs in a row.

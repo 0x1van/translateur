@@ -74,7 +74,7 @@ class FakeOllama(BaseHTTPRequestHandler):
             if k == "A" and "English so far" in user:
                 prev = user.split("(continue its voice): ", 1)[1].split("\n", 1)[0]
                 tag += f" [prev: {prev[-12:]}]"
-            if body["temperature"] >= 1.0 and "Жизнь" in sent:  # a hot sample cut mid-loop
+            if body["temperature"] >= 0.8 and "Жизнь" in sent:  # a hot sample cut mid-loop
                 self._send(
                     {
                         "choices": [
@@ -86,7 +86,7 @@ class FakeOllama(BaseHTTPRequestHandler):
             if k == "C" and "Конец" in sent:  # a voice that never yields usable JSON
                 self._send({"choices": [{"message": {"content": "nope"}}]})
                 return
-            if body["temperature"] >= 1.0:  # a hot model echoing the source
+            if body["temperature"] >= 0.8:  # a hot model echoing the source
                 out = {"text": sent}
             else:
                 out = {"text": f"{k} of {translit(sent)}{tag}"}
@@ -279,7 +279,7 @@ def test_eval_golden(tmp_path, monkeypatch):
     rows = ev.load("t")
     r = rows[("golden", 0, 1)]
     assert r["A"] == "A of Dva. [prev: One.]" and r["bad"] == {"A": 0, "B": 0, "C": 0}
-    assert r["calls"] == 4  # the fake echoes the Russian at 1.0, so C was retried once
+    assert r["calls"] == 4  # the fake echoes the Russian at 0.8, so C was retried once
     ev.compare("t", "t")  # zero deltas, must not crash
 
 
