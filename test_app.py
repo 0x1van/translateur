@@ -525,7 +525,13 @@ def test_e2e(page, server_url):
     en2.click()
     ta2.fill("teh cat. teh dog.")
     page.keyboard.press("Escape")
-    page.locator(".row").nth(2).locator(".check").click()
+    def check(row):  # "check grammar" lives in the ⋯ menu in the corner of the English cell
+        row.locator(".more summary").click()
+        assert row.locator(".analyse").is_disabled()  # reserved for the editor pass, not built
+        row.locator(".check").click()
+        assert not row.locator("details.more").evaluate("d => d.open")  # picking closes it
+
+    check(page.locator(".row").nth(2))
     page.wait_for_selector(".issue")
     en2.click()
     ta2.fill("teh cat. teh dog. Added later.")
@@ -539,7 +545,7 @@ def test_e2e(page, server_url):
     en2.click()
     ta2.fill("Helo!")
     page.keyboard.press("Escape")
-    page.locator(".row").nth(2).locator(".check").click()
+    check(page.locator(".row").nth(2))
     page.wait_for_selector(".issue")
     page.locator(".row").nth(2).locator(".issue").click()
     assert ta2.input_value() == "Hello!"
@@ -547,7 +553,7 @@ def test_e2e(page, server_url):
     en2.click()
     ta2.fill("Its late. Its fur is wet.")
     page.keyboard.press("Escape")
-    page.locator(".row").nth(2).locator(".check").click()
+    check(page.locator(".row").nth(2))
     page.wait_for_selector(".issue")
     en2.click()
     ta2.fill("It's late. Its fur is wet.")
@@ -558,7 +564,7 @@ def test_e2e(page, server_url):
     en2.click()
     ta2.fill("He were late. They were early.")
     page.keyboard.press("Escape")
-    page.locator(".row").nth(2).locator(".check").click()
+    check(page.locator(".row").nth(2))
     page.wait_for_selector(".issue")
     en2.click()
     ta2.fill("He was late. They were early.")  # fixed by hand meanwhile
@@ -570,7 +576,7 @@ def test_e2e(page, server_url):
     ta2.fill("teh end.")
     page.keyboard.press("Escape")
     # grammar check + apply fix
-    page.locator(".row").nth(2).locator(".check").click()
+    check(page.locator(".row").nth(2))
     page.wait_for_selector(".issue")
     page.locator(".issue").click()
     assert ta2.input_value() == "the end."

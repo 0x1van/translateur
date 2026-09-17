@@ -133,7 +133,7 @@
           : '<span class="ph">paste the Russian here…</span>'}</p><textarea class="src" lang="ru" spellcheck="false" placeholder="…"></textarea></div>
         <div class="cell tr"><p class="en" lang="en-GB" title="click a word to look it up · click elsewhere to edit"></p><textarea class="tr" lang="en-GB" spellcheck="true" placeholder="…"></textarea>
           <div class="variants" hidden></div>
-          <div class="tools"><button type="button" class="check">check grammar</button></div><div class="issues"></div></div>
+          <details class="more"><summary title="paragraph tools">⋯</summary><menu><button type="button" class="check">check grammar</button><button type="button" class="analyse" disabled title="soon: an editor reads the paragraph and suggests options">analyse</button></menu></details><div class="issues"></div></div>
       </div>`).join('');
     grid.querySelectorAll('.cell.tr').forEach((cell, i) => { $('textarea.tr', cell).value = work.translation[i]; view(cell); });
     grid.querySelectorAll('textarea.src').forEach((ta, i) => { ta.value = work.source[i]; });
@@ -260,7 +260,7 @@
     const ru = e.target.closest('p.ru');
     if (ru) return editSource(ru.closest('.cell.src'));
     const chk = e.target.closest('.check');
-    if (chk) return checkGrammar(chk.closest('.row'));
+    if (chk) { chk.closest('details').open = false; return checkGrammar(chk.closest('.row')); }
     const iss = e.target.closest('.issue');
     if (iss) return applyIssue(iss);
   });
@@ -399,7 +399,10 @@
     const left = Math.min(x, window.innerWidth - pop.offsetWidth - 16);
     pop.style.left = Math.max(8, left) + 'px'; pop.style.top = (y + 6) + 'px';
   }
-  document.addEventListener('mousedown', e => { if (!pop.contains(e.target)) pop.hidden = true; });
+  document.addEventListener('mousedown', e => {
+    if (!pop.contains(e.target)) pop.hidden = true;
+    grid.querySelectorAll('details.more[open]').forEach(d => { if (!d.contains(e.target)) d.open = false; });
+  });
   document.addEventListener('keydown', e => {
     if (e.key !== 'Escape') return;
     if (pop.hidden && document.activeElement?.matches('textarea.tr, textarea.src')) document.activeElement.blur();

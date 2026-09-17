@@ -121,8 +121,19 @@ textarea.src:focus { outline: none; }
 .tree summary .prog i { display: none; }  /* the group line keeps the numbers; the bar is per work */
 .tree summary .add { border: 0; padding: 0 0.3rem; font-size: 0.75rem; color: var(--color-text-muted); }
 .tree summary .add:hover { box-shadow: none; color: var(--color-text); }
-.tools { display: flex; gap: var(--space-sm); margin-top: var(--space-xs); }
-.tools button { border-color: transparent; color: var(--color-text-muted); padding-left: 0; }
+/* paragraph tools: a native <details> menu in the corner of the English cell; the glyph is faint
+   until the row is hovered or focused, the menu is one item per action */
+.cell.tr { position: relative; padding-right: 1.6rem; }
+.more { position: absolute; top: 0; right: 0; }
+.more summary { list-style: none; cursor: pointer; color: var(--color-border); padding: 0 0.3rem; line-height: 1.7; user-select: none; }
+.more summary::-webkit-details-marker { display: none; }
+.row:hover .more summary, .row:focus-within .more summary, .more[open] summary { color: var(--color-text-muted); }
+.more summary:hover { color: var(--color-text); }
+.more menu { position: absolute; right: 0; z-index: 2; margin: 0; padding: var(--space-xs); list-style: none; display: grid;
+  background: var(--color-bg); border: 1px solid var(--color-border); box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+.more menu button { border: 0; text-align: left; white-space: nowrap; }
+.more menu button:hover { box-shadow: none; background: var(--color-bg-alt); }
+.more menu button:disabled { color: var(--color-border); cursor: default; background: none; }
 .issues { font-size: 0.9rem; }
 .issue {
   display: block; width: 100%; text-align: left; text-transform: none; letter-spacing: 0;
@@ -195,4 +206,13 @@ dialog input, dialog textarea { display: block; width: 100%; margin-top: var(--s
   .row { grid-template-columns: 1fr; }
   .shell { grid-template-columns: 1fr; }
   .tree { position: static; max-height: none; border-right: 0; border-bottom: 1px solid var(--color-border); }
+}
+/* touch (iPad home-screen): no hover, so the paragraph menu glyph stays visible and the small
+   targets get finger-sized padding. ponytail: sentence numbers still ~26px, not 44; make them
+   block chips if tapping them misses too often */
+@media (hover: none) {
+  .more summary { color: var(--color-text-muted); }
+  .n { font-size: 0.7rem; padding: 0.6em 0.4em; }
+  .bar button, .tree-head button { padding: 0.45rem 0.7rem; }
+  .work-item { padding: 0.4rem 0.5rem; }
 }
