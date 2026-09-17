@@ -8,14 +8,15 @@ save a git commit.
 
 ```bash
 uv sync --all-groups
-uv run python fetch_data.py                   # once: WikDict ru-en + en-ru (38 MB), Moby (25 MB), Open English WordNet
+uv run python fetch_data.py                   # once: WikDict ru-en + en-ru (38 MB), Moby (25 MB), Open English WordNet, VarCon spelling tables
 cp .env.example .env                          # model endpoint, models, store, optional password
 set -a; source .env; set +a
 uv run uvicorn app:app --reload --port 8765   # http://127.0.0.1:8765
 ```
 
 Data lives in one `store/` directory (`STORE_DIR`): `works/<slug>/{source.md,translation.md}`
-paragraph-aligned, `projects/<name>/translation/{config.md,glossary.yaml,about.md}`, and
+paragraph-aligned, `projects/<name>/translation/{config.md,glossary.yaml,about.md}`, the house
+layer `style.md` + `glossary.yaml` at the root (see "Style guide and glossary"), and
 `picks.jsonl` — one line per variant you clicked, with the two you passed over, for later
 analysis. The store is its own git repository — one commit per save — so back it up by pushing it somewhere.
 
@@ -45,8 +46,9 @@ app (web manifest + touch icon, no service worker: the server does the work, not
 - **click a Russian word** — dictionary (lemma, grammar, WikDict senses; click a translation to insert it) plus Russian near-synonyms (WikDict round trip ru→en→ru).
 - **English pane** — a rendered view with hoverable words until you click into it to type (click past a word, or Escape to leave). Sentences are numbered in step with the Russian; the numbers turn red when a paragraph's sentence counts differ. **Click a word** (or select a phrase while editing) — one popover: the model's alternatives for that span (contextual, sampled wild), WordNet synonyms grouped by sense, and Moby's flat all-senses list folded behind *more*; click any to swap it in.
 - **⋯ menu** at the corner of each English paragraph, one model pass per item: **check grammar**
-  (mechanical fixes; click an issue to apply it), **UK spelling** (converts the paragraph; model
-  output already arrives in UK spelling, your own US spellings get a dotted underline),
+  (mechanical fixes; click an issue to apply it), **UK spelling** (converts the paragraph to the
+  declared spelling; model output already arrives converted, your own other-variant spellings and
+  quotes or dashes against the conventions get a dotted underline),
   **analyse** (an editor reads the paragraph against the Russian, the project's about text and
   glossary, and proposes changes as the same click-to-apply hunks; every hunk shown and every
   hunk accepted is logged to `picks.jsonl`, and `eval_golden.py picks` prints the acceptance
@@ -62,8 +64,38 @@ app (web manifest + touch icon, no service worker: the server does the work, not
   saved as `projects/<name>/translation/about.md` (seeded from the project's config the first
   time). The app writes the actual prompt around it: role, rules, output format and the three
   voices (the project's own variant scheme from `config.md` if it has one, else the defaults).
-  `glossary.yaml` terms and rejected terms are injected per sentence. The per-voice freedom
-  (temperature) is kept per browser.
+  The per-voice freedom (temperature) is kept per browser.
+
+## Style guide and glossary
+
+Two layers, both plain files in the store. The house layer is yours across projects:
+`store/style.md` (a voice paragraph, then `## Conventions` as `key: value` lines, `## Rules` as
+bullets, `## Notes` as prose) and `store/glossary.yaml`. A project's `config.md` may carry the
+same headings plus `## Departures from house style`: its conventions override key by key, its
+rules and notes follow the house ones, its `glossary.yaml` wins on the same Russian head, rejected
+lists add up. Files that aren't there change nothing.
+
+Conventions are the checkable part — `spelling: en-GB-ise | en-GB-oxendict`, `quotes: single |
+double`, `dash: spaced-en | spaced-em | em`, `dialogue: dash | quotes` — and are enforced in
+code, not asked for in prose: model output is respelt from the VarCon tables before you see it,
+the pane underlines what you typed against them, and the golden run counts them. Rules are for
+the model; keep them few (adherence falls off past ten or so; a warning is logged past twenty),
+positive, one topic each, with an example.
+
+Every model call gets the same compiled block: the translate voices, the word-popover
+alternatives, analyse and notes get voice + conventions + rules + the glossary and rejected
+terms that match the sentence or paragraph (with each term's rationale and the rendering to use
+instead of a rejected one); analyse and notes also get the notes prose; check grammar gets the
+conventions line only. A glossary rendering missing from a variant counts against it like a
+rejected term, and the analyse editor is told which renderings are missing so it can propose
+them as hunks. `STYLE_BLOCK=0` sends the glossary lines alone (for before/after runs).
+
+Adding terms: click a Russian word (or select a phrase) → the popover has *glossary · add*,
+prefilled from your English selection; click an English word → *add for* / *reject for* a head
+picked from the aligned Russian sentence (the one whose dictionary entry contains the word is
+preselected). Entries go to the project's `glossary.yaml` (the house one under *plain*), the
+same head is updated rather than duplicated, `first_used` is the open work, and it is a commit
+in the store like a save. The files stay hand-editable; nothing else in them is touched.
 
 
 Tests: `uv run python -m playwright install chromium chromium-headless-shell` once, then
@@ -80,10 +112,13 @@ it catches a model that drops, echoes or overruns, it cannot rank two good model
 
     set -a; source .env; set +a
     uv run python eval_golden.py run <name> --model <id>      # ~$0.15 on DeepSeek Pro, ~$1.20 on GPT Sol
-    uv run python eval_golden.py compare <a> <b>              # paired delta per voice, wins, Wilson CI
+    uv run python eval_golden.py compare <a> <b>              # paired delta per voice, wins, Wilson CI, the code checks
     uv run python eval_golden.py picks                        # what you actually chose, by voice/position (Wilson CI per letter)
 
-Keep a change unless a voice's win-share interval sits below 50 % or bad/retry rates rise. Two
+Keep a change unless a voice's win-share interval sits below 50 %, bad/retry rates rise, or the
+checks line gets worse (glossary hit rate over matched terms, rejected terms used, spellings the
+server had to fix and quote/dash violations per 1k words — deterministic counters, never a model
+judging compliance). Two
 identical runs differ by up to ±2 chrF on B and C, so a mean delta inside that is noise. Same 100
 sentences; chrF for voices A/B/C:
 
@@ -99,6 +134,8 @@ sentences; chrF for voices A/B/C:
 | 2026-09-17 | + under-run and rejected-term checks | 44.9 | 49.4 | 41.4 | kept; nothing fires on this set |
 | 2026-09-17 | + own examples (top 3, cosine ≥ 0.4) | 45.1 | 51.9 | 41.6 | kept; fires on 14 of 100, B +8 on those |
 | 2026-09-17 | free text instead of JSON | 44.5 | 50.5 | 42.4 | not kept; all within noise, JSON stays |
+| 2026-09-17 | + glossary rationale lines, miss check, server respell (`STYLE_BLOCK=0`) | 44.8 | 50.6 | 41.4 | kept; within noise; "bad" now counts a missing glossary rendering (5 % on A, all retried once); glossary hit 90 % of 72 matched |
+| 2026-09-17 | + style block (conventions line + 6 project rules) | 44.3 | 50.2 | 42.1 | kept, default on; within noise vs the row above; hit rate unchanged; quotes+dashes 0.7 → 1.5 per 1k words (3 outputs: straight quotes, one unspaced dash) |
 
 Rows below the model block are cumulative: each is the previous row plus one change, on the
 default model.

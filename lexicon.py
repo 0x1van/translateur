@@ -46,6 +46,22 @@ def _clean(word: str) -> str:
     return word.strip().strip("«»“”\"'.,;:!?…()—-")
 
 
+def lemma(word: str) -> str:
+    """The most likely dictionary form of one Russian word: how a glossary head is written."""
+    return _ru_candidates(_clean(word))[0]
+
+
+_MORPHY = Morphy()  # uninitialised: the detachment rules alone, no WordNet needed
+
+
+@cache
+def en_lemmas(word: str) -> frozenset[str]:
+    """An English word with its rule-based base forms (peasants → peasant, analysing → analyse),
+    for finding a glossary rendering in a draft."""
+    w = word.lower().replace("\u2019", "'")
+    return frozenset({w, *(lm for ls in _MORPHY(w, None).values() for lm in ls)})
+
+
 def _ru_candidates(word: str) -> list[str]:
     """Lemmas to try in the dictionary: every parse's normal form, then the word itself."""
     out: list[str] = []

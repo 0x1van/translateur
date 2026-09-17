@@ -180,7 +180,7 @@ textarea.src:focus { outline: none; }
 .variant small { font-family: var(--font-mono); font-size: 0.6rem; color: var(--color-text-muted); margin-right: 0.5rem; }
 .variants .current { margin: var(--space-xs) 0; font-size: 0.95rem; color: var(--color-text-muted); }
 .variants .current small { display: block; font-family: var(--font-mono); font-size: 0.6rem; letter-spacing: 0.06em; text-transform: uppercase; }
-p.en .us { text-decoration: underline dotted var(--color-error); text-underline-offset: 3px; }
+p.en .us, p.en .pn { text-decoration: underline dotted var(--color-error); text-underline-offset: 3px; }
 p.en .target { background: color-mix(in srgb, var(--color-accent) 35%, transparent); }
 .variants .glossary { font-family: var(--font-mono); font-size: 0.65rem; color: var(--color-text-muted); margin-top: var(--space-xs); }
 .thinking { font-family: var(--font-mono); font-size: 0.65rem; color: var(--color-text-muted); }
@@ -207,6 +207,9 @@ p.en .target { background: color-mix(in srgb, var(--color-accent) 35%, transpare
 .pop details summary::before { content: "▸ "; }
 .pop details[open] summary::before { content: "▾ "; }
 .pop .none { color: var(--color-text-muted); font-style: italic; }
+.pop form.gl { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; margin-top: var(--space-xs); }
+.pop form.gl .tag { flex-basis: 100%; margin: 0; }
+.pop form.gl input, .pop form.gl select { flex: 1; min-width: 8rem; font: inherit; }
 
 /* ---- dialogs ---- */
 dialog { border: 1px solid var(--color-border); border-top: 2px solid var(--color-accent); background: var(--color-bg); padding: var(--space-lg); width: min(720px, 92vw); }

@@ -15,6 +15,7 @@ import os
 import re
 import subprocess
 import sys
+import textwrap
 import threading
 import time
 from collections import Counter
@@ -214,7 +215,8 @@ def _git_commit(path: Path, message: str) -> None:
             _git("init", "-q")
             _git("config", "user.email", "translateur@local")
             _git("config", "user.name", "translateur")
-        _git("add", "-A", str(path))
+        house = [str(f) for f in (STORE_DIR / "style.md", STORE_DIR / "glossary.yaml") if f.exists()]
+        _git("add", "-A", str(path), *house)  # the hand-edited house files ride along
         _git("commit", "-q", "-m", message)
     except OSError:
         pass
@@ -325,7 +327,11 @@ def picks() -> FileResponse:
     return FileResponse(path, media_type="text/plain; charset=utf-8")
 
 
-# ---------- presets (voices from projects/*/translation/config.md) ----------
+# ---------- presets: house style in store/, project overrides by heading ----------
+# store/style.md: a voice paragraph, then `## Conventions` (key: value lines), `## Rules` (one
+# bullet each), `## Notes`; store/glossary.yaml in the project schema. A project's config.md may
+# carry the same headings: its conventions override key by key, its rules and notes follow the
+# house ones, its glossary wins on the same Russian head, rejected lists add up. No files, nothing.
 
 
 def _sections(md: str) -> dict[str, str]:
@@ -335,7 +341,11 @@ def _sections(md: str) -> dict[str, str]:
     return out
 
 
-_SKIP_SECTIONS = {"Variant scheme", "Output shape", "Voice-continuity source"}
+def _intro(md: str) -> str:
+    """The prose before the first `##`, minus the title line."""
+    head = re.split(r"^## ", md, maxsplit=1, flags=re.MULTILINE)[0]
+    head = re.sub(r"<!--.*?-->", "", head, flags=re.DOTALL)
+    return re.sub(r"^# .*\n", "", head).strip()
 
 
 def about_path(name: str) -> Path:
@@ -350,8 +360,6 @@ def about_path(name: str) -> Path:
 def _seed_description(md: str, sec: dict[str, str]) -> str:
     """A first description for a project that has a config but no about.md: its intro paragraph
     plus its translation philosophy, minus markdown noise."""
-    intro = re.split(r"^## ", md, maxsplit=1, flags=re.MULTILINE)[0]
-    intro = re.sub(r"^# .*\n", "", intro).strip()
     gist = next(
         (
             sec[h]
@@ -360,66 +368,115 @@ def _seed_description(md: str, sec: dict[str, str]) -> str:
         ),
         "",
     )
-    text = "\n\n".join(t for t in (intro, gist) if t)
+    text = "\n\n".join(t for t in (_intro(md), gist) if t)
     return re.sub(r"[*`]|\[([^\]]*)\]\([^)]*\)", r"\1", text).strip()
+
+
+def _style(sec: dict[str, str]) -> dict:
+    """The compiled headings of a style file: declared conventions, one rule per bullet, prose."""
+    conv = {
+        m.group(1).lower(): m.group(2).strip("`* ")
+        for m in re.finditer(
+            r"^[-*\s]*[`*]*(\w+)[`*]*\s*:\s*(\S.*?)\s*$", sec.get("Conventions", ""), re.MULTILINE
+        )
+    }
+    rules = re.findall(r"^\s*(?:[-*]|\d+[.)])\s+(.+?)\s*$", sec.get("Rules", ""), re.MULTILINE)
+    notes = "\n\n".join(
+        t for t in (sec.get("Notes", ""), sec.get("Departures from house style", "")) if t
+    )
+    return {"conventions": conv, "rules": rules, "notes": notes}
+
+
+_GLOSSARY_KEYS = ("vocabulary", "cultural_references", "compounds", "names", "register_markers")
+
+
+def _load_glossary(path: Path) -> tuple[list[dict], list[dict]]:
+    """glossary.yaml → terms {ru, en[, alts, why, first]} and rejected {ru, en[, use]}."""
+    if not path.exists():
+        return [], []
+    g = yaml.safe_load(path.read_text()) or {}
+    terms, rejected = [], []
+    for key in _GLOSSARY_KEYS:
+        for e in g.get(key) or []:  # russian/english, or original/modern transpositions
+            if not isinstance(e, dict):
+                continue
+            ru = e.get("russian") or e.get("original")
+            en = e.get("english") or e.get("modern")
+            if not (ru and en):
+                continue
+            t = {"ru": str(ru), "en": str(en)}
+            if e.get("alternatives"):
+                t["alts"] = [str(a) for a in e["alternatives"]]
+            if e.get("rationale"):
+                t["why"] = " ".join(str(e["rationale"]).split())
+            if e.get("first_used"):
+                t["first"] = str(e["first_used"])
+            terms.append(t)
+    for e in g.get("rejected") or []:  # for/term or for_russian/term
+        ru = isinstance(e, dict) and (e.get("for") or e.get("for_russian"))
+        if ru and e.get("term"):
+            r = {"ru": str(ru), "en": str(e["term"])}
+            if e.get("use_instead"):
+                r["use"] = str(e["use_instead"])
+            rejected.append(r)
+    return terms, rejected
+
+
+def _merge(house: list[dict], project: list[dict], override: bool) -> list[dict]:
+    """House entries then the project's, identical ones once; with `override` a project head
+    replaces the house entry for the same Russian."""
+    heads = {t["ru"].strip().lower() for t in project} if override else set()
+    out = [t for t in house if t["ru"].strip().lower() not in heads] + project
+    return list({json.dumps(t, sort_keys=True, ensure_ascii=False): t for t in out}.values())
 
 
 @cache
 def load_presets() -> list[dict]:
+    style = STORE_DIR / "style.md"
+    md0 = style.read_text() if style.exists() else ""
+    house = _style(_sections(md0)) | {"voice": _intro(md0)}
+    terms0, rej0 = _load_glossary(STORE_DIR / "glossary.yaml")
     presets = [
-        {"name": "plain", "voices": DEFAULT_VOICES, "seed": "", "glossary": [], "rejected": []}
+        {"name": "plain", "voices": DEFAULT_VOICES, "seed": "", "glossary": terms0, "rejected": rej0}
+        | house
     ]
     for cfg in sorted(PROJECTS_DIR.glob("*/translation/config.md")):
         md = cfg.read_text()
         sec = _sections(md)
-        voices = dict(
-            DEFAULT_VOICES
-        )  # the project's own variant scheme overrides, letter by letter
+        voices = dict(DEFAULT_VOICES)  # the project's own variant scheme overrides, letter by letter
         for m in re.finditer(
             r"^- \*\*([ABC]) — ([^*]+?):?\*\*:?\s*(.*)$",
             sec.get("Variant scheme", ""),
             re.MULTILINE,
         ):
             voices[m.group(1)] = f"{m.group(2).strip()}: {m.group(3).strip()}"
-        glossary, rejected = [], []
-        gpath = cfg.with_name("glossary.yaml")
-        if gpath.exists():
-            g = yaml.safe_load(gpath.read_text()) or {}
-            for key in (
-                "vocabulary",
-                "cultural_references",
-                "compounds",
-                "names",
-                "register_markers",
-            ):
-                for e in g.get(key) or []:  # russian/english, or original/modern transpositions
-                    if not isinstance(e, dict):
-                        continue
-                    ru = e.get("russian") or e.get("original")
-                    en = e.get("english") or e.get("modern")
-                    if ru and en:
-                        glossary.append({"ru": ru, "en": en})
-            for e in g.get("rejected") or []:  # for/term or for_russian/term; use_instead is prose
-                ru = isinstance(e, dict) and (e.get("for") or e.get("for_russian"))
-                if ru and e.get("term"):
-                    rejected.append({"ru": ru, "en": e["term"]})
+        own = _style(sec)
+        terms, rej = _load_glossary(cfg.with_name("glossary.yaml"))
         presets.append(
             {
                 "name": cfg.parent.parent.name,
                 "voices": voices,
                 "seed": _seed_description(md, sec),
-                "glossary": [dict(t) for t in dict.fromkeys(tuple(g.items()) for g in glossary)],
-                "rejected": rejected,
+                "glossary": _merge(terms0, terms, override=True),
+                "rejected": _merge(rej0, rej, override=False),
+                "voice": house["voice"],
+                "conventions": house["conventions"] | own["conventions"],
+                "rules": house["rules"] + own["rules"],
+                "notes": "\n\n".join(t for t in (house["notes"], own["notes"]) if t),
             }
         )
     return presets
+
+
+def _preset(name: str) -> dict | None:
+    return next((p for p in load_presets() if p["name"] == name), None)
 
 
 def description_of(name: str) -> str:
     p = about_path(name)
     if p.exists():
         return p.read_text().strip()
-    return next((x["seed"] for x in load_presets() if x["name"] == name), "")
+    return (_preset(name) or {}).get("seed", "")
 
 
 class About(BaseModel):
@@ -429,7 +486,7 @@ class About(BaseModel):
 @app.put("/api/projects/{name}")
 def save_about(name: str, body: About) -> dict:
     """The project's description, in the translator's own words; the app builds the prompt around it."""
-    if not any(x["name"] == name for x in load_presets()):
+    if not _preset(name):
         raise HTTPException(404, "no such project")
     p = about_path(name)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -451,6 +508,16 @@ PROJECT_TEMPLATE = """# {name}
 - **A — Literal (control):** Closest to the Russian syntax and word order; may read slightly foreign.
 - **B — Project voice:** Faithful, precise, unshowy British English; keeps sentence length and rhythm.
 - **C — Alternative literary phrasing:** A different cadence or subtler word, same register.
+
+## Conventions
+(only what differs from store/style.md, one `key: value` per line — spelling: en-GB-ise or
+en-GB-oxendict; quotes: single or double; dash: spaced-en, spaced-em or em; dialogue: dash or quotes)
+
+## Rules
+(one positive rule per bullet, with an example; sent to the model after the house rules)
+
+## Departures from house style
+(where and why this project breaks the house rules; read by the analyse and notes passes)
 """
 
 
@@ -474,13 +541,18 @@ def create_project(body: NewProject) -> list[dict]:
 @app.get("/api/presets")
 def get_presets() -> list[dict]:
     return [
-        {"name": p["name"], "voices": p["voices"], "description": description_of(p["name"])}
+        {
+            "name": p["name"],
+            "voices": p["voices"],
+            "description": description_of(p["name"]),
+            "conventions": p["conventions"],
+        }
         for p in load_presets()
     ]
 
 
 def glossary_for(preset_name: str, sentence: str) -> tuple[list[dict], list[dict]]:
-    p = next((p for p in load_presets() if p["name"] == preset_name), None)
+    p = _preset(preset_name)
     if not p:
         return [], []
     tokens = [lexicon.lemmas(w) for w in lexicon.WORD_RE.findall(sentence)]  # lemma set per word
@@ -499,6 +571,299 @@ def glossary_for(preset_name: str, sentence: str) -> tuple[list[dict], list[dict
         return False
 
     return ([g for g in p["glossary"] if hit(g["ru"])], [r for r in p["rejected"] if hit(r["ru"])])
+
+
+# ---------- the style block: what every model call is told about how this translator writes ----------
+
+STYLE_BLOCK = os.environ.get("STYLE_BLOCK", "1") != "0"  # kill switch for the golden comparison
+CONVENTION_TEXT = {
+    ("spelling", "en-GB-ise"): "British spelling with -ise (colour, centre, organise)",
+    ("spelling", "en-GB-oxendict"): "British spelling with Oxford -ize (colour, centre, organize)",
+    ("quotes", "single"): "single quotation marks ‘like this’, double only inside them",
+    ("quotes", "double"): "double quotation marks “like this”, single only inside them",
+    ("dash", "spaced-en"): "spaced en dashes – like this – for breaks in prose",
+    ("dash", "spaced-em"): "spaced em dashes — like this — for breaks in prose",
+    ("dash", "em"): "unspaced em dashes—like this—for breaks in prose",
+    ("dialogue", "dash"): "dialogue opened with a dash, as in the Russian",
+    ("dialogue", "quotes"): "dialogue in quotation marks, not dashes",
+}
+_WARNED: set[str] = set()
+
+
+def conventions_of(preset_name: str) -> dict[str, str]:
+    return (_preset(preset_name) or {}).get("conventions", {})
+
+
+def variant_of(preset_name: str) -> str:
+    return conventions_of(preset_name).get("spelling", "en-GB-ise")
+
+
+def style_block(preset_name: str, text: str) -> dict:
+    """Compiled from the house style and the project's overrides: `voice`, the `conventions`
+    line, `rules` (house then project), `glossary` and `rejected` entries matching `text` (a
+    sentence or a paragraph), `notes` prose. `STYLE_BLOCK=0` keeps only the glossary lines."""
+    p = _preset(preset_name) or {}
+    glossary, rejected = glossary_for(preset_name, text)
+    rules = p.get("rules", [])
+    if len(rules) > 20 and preset_name not in _WARNED:  # adherence falls off past ~10–15 rules
+        _WARNED.add(preset_name)
+        print(f"{preset_name}: {len(rules)} rule lines reach every model call", file=sys.stderr)
+    conv = "; ".join(CONVENTION_TEXT.get((k, v), f"{k}: {v}") for k, v in conventions_of(preset_name).items())
+    if not STYLE_BLOCK:
+        return {"voice": "", "conventions": "", "rules": [], "glossary": glossary, "rejected": rejected, "notes": ""}
+    return {
+        "voice": p.get("voice", ""),
+        "conventions": conv,
+        "rules": rules,
+        "glossary": glossary,
+        "rejected": rejected,
+        "notes": p.get("notes", ""),
+    }
+
+
+def term_line(g: dict) -> str:
+    extra = [x for x in (g.get("why"), f"first used in {g['first']}" if g.get("first") else "") if x]
+    return f"{g['ru']} → {g['en']}" + (f" ({'; '.join(extra)})" if extra else "")
+
+
+def style_prompt(block: dict, rules: bool = True, terms: bool = True, notes: bool = False) -> str:
+    """The block as prompt text: the stable part first (voice, conventions, rules, notes), the
+    per-text glossary lines last, so a cached prefix survives from one sentence to the next.
+    Grammar gets `rules=False, terms=False`: the conventions line alone."""
+    out = ""
+    if rules and block["voice"]:
+        out += f"The translator's voice, in their words:\n{block['voice']}\n\n"
+    if block["conventions"]:
+        out += f"Conventions: {block['conventions']}.\n"
+    if rules and block["rules"]:
+        out += "Rules:\n" + "".join(f"- {r}\n" for r in block["rules"])
+    if notes and block["notes"]:
+        out += f"\nNotes from the style guide:\n{block['notes']}\n\n"
+    if terms and block["glossary"]:
+        out += "Glossary (use these renderings): " + "; ".join(map(term_line, block["glossary"])) + "\n"
+    if terms and block["rejected"]:
+        out += (
+            "Do NOT use: "
+            + "; ".join(
+                f"“{r['en']}” for {r['ru']}" + (f" (use instead: {r['use']})" if r.get("use") else "")
+                for r in block["rejected"]
+            )
+            + "\n"
+        )
+    return out
+
+
+# ---------- checks in code: glossary on the English side, spelling, quotes and dashes ----------
+
+_EN_WORD = re.compile(r"[A-Za-z][A-Za-z'’-]*")
+_EN_STOP = {"a", "an", "the", "to"}
+
+
+def renderings(en: str) -> list[str]:
+    """'peasant men (pl.) / a peasant (sg.)' → the phrases a glossary entry admits."""
+    return [x for x in re.split(r"\s*/\s*", re.sub(r"\([^)]*\)", "", en)) if _EN_WORD.search(x)]
+
+
+def glossary_misses(glossary: list[dict], text: str) -> list[dict]:
+    """Entries whose preferred rendering, or an admitted alternative, is not in the English by
+    lemma ('crucian carp' is found in 'crucian carps'; articles do not count)."""
+    toks = [lexicon.en_lemmas(w) for w in _EN_WORD.findall(text) if w.lower() not in _EN_STOP]
+
+    def present(phrase: str) -> bool:
+        words = [lexicon.en_lemmas(w) for w in _EN_WORD.findall(phrase) if w.lower() not in _EN_STOP]
+        return bool(words) and any(
+            all(words[k] & toks[i + k] for k in range(len(words)))
+            for i in range(len(toks) - len(words) + 1)
+        )
+
+    out = []
+    for g in glossary:
+        phrases = renderings(g["en"]) + [ph for a in g.get("alts", []) for ph in renderings(a)]
+        if phrases and not any(map(present, phrases)):
+            out.append(g)
+    return out
+
+
+SPELLING_JSON = Path(os.environ.get("SPELLING_JSON", lexicon.DATA / "spelling.json"))
+
+
+@cache
+def spelling_map(variant: str) -> dict[str, str]:
+    """Other form → the declared British form (VarCon, built by fetch_data.py); empty without it."""
+    if not SPELLING_JSON.exists():
+        print("data/spelling.json missing — run: uv run python fetch_data.py", file=sys.stderr)
+        return {}
+    return json.loads(SPELLING_JSON.read_text()).get("Z" if variant == "en-GB-oxendict" else "B", {})
+
+
+@cache
+def _spelling_re(variant: str) -> re.Pattern | None:
+    words = sorted(spelling_map(variant), key=len, reverse=True)
+    return re.compile(r"\b(?:" + "|".join(map(re.escape, words)) + r")\b", re.IGNORECASE) if words else None
+
+
+def respell(text: str, variant: str) -> tuple[str, int]:
+    """`text` in the declared spelling, and how many words had to change."""
+    # ponytail: proper nouns go too (Pearl Harbor → Harbour); an exceptions list in style.md if it bites
+    rx = _spelling_re(variant)
+    if not rx:
+        return text, 0
+    table, n = spelling_map(variant), 0
+
+    def fix(m: re.Match) -> str:
+        nonlocal n
+        w = m.group(0)
+        uk = table.get(w.lower())
+        if not uk:
+            return w
+        n += 1
+        return uk[0].upper() + uk[1:] if w[0].isupper() else uk
+
+    return rx.sub(fix, text), n
+
+
+# ponytail: the same rules live in static/app.js (badPunct) for the pane markers; keep them in step
+_DASH_WRONG = {"spaced-en": r"—| - ", "spaced-em": r" – | - |(?<=\w)—(?=\w)", "em": r" – | - | — "}
+
+
+def punct_violations(text: str, conv: dict) -> int:
+    """Quotation marks and dashes against the declared conventions: straight double quotes
+    always; the other family's quotes; the wrong dash for a break in prose. Under `dialogue:
+    dash` a dash that opens a line or follows a full stop is dialogue, not a break."""
+    n = text.count('"')
+    if conv.get("quotes") == "single":
+        n += len(re.findall(r"[“”]", text))
+    elif conv.get("quotes") == "double":
+        n += len(re.findall(r"(?:^|\s)‘", text))
+    for m in re.finditer(_DASH_WRONG.get(conv.get("dash", ""), r"(?!)"), text):
+        i = m.group(0).find("—")
+        if (
+            i >= 0
+            and conv.get("dialogue") == "dash"
+            and re.search(r"(?:^|[.!?…])[\s”»]*$", text[: m.start() + i], re.MULTILINE)
+        ):
+            continue
+        n += 1
+    return n
+
+
+@app.get("/api/spelling/{variant}")
+def spelling(variant: str) -> JSONResponse:
+    return JSONResponse(spelling_map(variant), headers={"Cache-Control": "max-age=86400"})
+
+
+# ---------- glossary editing ----------
+
+
+class GlossaryEntry(BaseModel):
+    project: str = ""  # empty: the house glossary, store/glossary.yaml
+    russian: str
+    english: str
+    kind: Literal["vocabulary", "rejected"] = "vocabulary"
+    note: str = ""
+    slug: str = ""  # the open work, recorded as first_used
+
+
+def _yaml_item(d: dict) -> str:
+    text = yaml.safe_dump(d, sort_keys=False, allow_unicode=True, width=10**6).rstrip("\n")
+    return "  - " + text.replace("\n", "\n    ") + "\n"
+
+
+def _yaml_upsert(text: str, section: str, entry: dict, same) -> str:
+    """`entry` appended to the `section:` list of a hand-written glossary.yaml, or merged into
+    the item `same(item)` picks out; nothing else in the file moves (comments, layout, the other
+    items stay as typed)."""
+    m = re.search(rf"^{section}:[ \t]*(\[\])?[ \t]*\n?", text, re.MULTILINE)
+    if not m:
+        return (text.rstrip("\n") + "\n\n" if text.strip() else "") + f"{section}:\n{_yaml_item(entry)}"
+    if m.group(1):  # `section: []`, the scaffold
+        return text[: m.start()] + f"{section}:\n{_yaml_item(entry)}" + text[m.end() :]
+    nxt = re.compile(r"^\S", re.MULTILINE).search(text, m.end())
+    end = nxt.start() if nxt else len(text)
+    for b in re.finditer(r"^  - .*?(?=^  - |\Z)", text[m.end() : end], re.MULTILINE | re.DOTALL):
+        old = (yaml.safe_load(textwrap.dedent(b.group(0))) or [None])[0]
+        if isinstance(old, dict) and same(old):
+            merged = old | entry
+            if section == "vocabulary" and old.get("english") not in (None, entry["english"]):
+                merged["alternatives"] = [old["english"]] + [
+                    a for a in old.get("alternatives") or [] if a != entry["english"]
+                ]
+            a, z = m.end() + b.start(), m.end() + b.end()
+            tail = "\n" if b.group(0).endswith("\n\n") else ""
+            return text[:a] + _yaml_item(merged) + tail + text[z:]
+    return text[:end].rstrip("\n") + "\n" + _yaml_item(entry) + ("\n" if end < len(text) else "") + text[end:]
+
+
+@app.post("/api/glossary")
+def add_term(body: GlossaryEntry) -> dict:
+    """A rendering (or a rejected one) for a Russian head, into the project's glossary.yaml or the
+    house one; a single word is filed under its lemma; the same head is updated, not duplicated.
+    A commit in the store, like a save."""
+    ru, en = " ".join(body.russian.split()), " ".join(body.english.split())
+    if not ru or not en:
+        raise HTTPException(400, "russian and english are both needed")
+    if body.project and not (PROJECTS_DIR / body.project / "translation").is_dir():
+        raise HTTPException(404, "no such project")
+    if lexicon.WORD_RE.fullmatch(ru):
+        ru = lexicon.lemma(ru)
+    low = ru.lower()
+    path = (PROJECTS_DIR / body.project / "translation" if body.project else STORE_DIR) / "glossary.yaml"
+    text = path.read_text() if path.exists() else ""
+    if body.kind == "vocabulary":
+        entry = {"russian": ru, "english": en}
+        if body.note:
+            entry["rationale"] = body.note
+        if body.slug:
+            entry["first_used"] = body.slug
+        text = _yaml_upsert(
+            text, "vocabulary", entry,
+            lambda d: str(d.get("russian") or d.get("original") or "").strip().lower() == low,
+        )
+    else:
+        entry = {"term": en, "for": ru}
+        if body.note:
+            entry["reason"] = body.note
+        preferred = next(
+            (g["en"] for g in (_preset(body.project or "plain") or {}).get("glossary", []) if g["ru"].lower() == low),
+            "",
+        )
+        if preferred and preferred.lower() != en.lower():
+            entry["use_instead"] = preferred
+        text = _yaml_upsert(
+            text, "rejected", entry,
+            lambda d: str(d.get("term", "")).strip().lower() == en.lower()
+            and str(d.get("for") or d.get("for_russian") or "").strip().lower() == low,
+        )
+    with _WRITE_LOCK:
+        _atomic_write(path, text)
+        _git_commit(path, f"{body.project or 'house'}: glossary {ru} → {en}")
+    load_presets.cache_clear()
+    return {"ok": True, "russian": ru, "english": en, "file": str(path.relative_to(STORE_DIR))}
+
+
+@app.get("/api/glossary/heads")
+def glossary_heads(sentence: str, english: str = "") -> dict:
+    """Candidate Russian heads for a term picked in the English pane: the sentence's words as
+    lemmas, and the one whose dictionary translations contain the term when exactly one does."""
+    en = english.strip().lower()
+    words, hits = [], []
+    for w in lexicon.WORD_RE.findall(sentence):
+        lemma = lexicon.lemma(w)
+        if len(lemma) < 2 or lemma in words:
+            continue
+        words.append(lemma)
+        if en:
+            try:
+                entries = lexicon.lookup(w)["entries"]
+            except lexicon.MissingData:
+                entries = []
+            if any(
+                en == t.lower() or en in re.split(r"[ ,;]+", t.lower())
+                for e in entries
+                for t in e["translations"]
+            ):
+                hits.append(lemma)
+    return {"words": words, "match": hits[0] if len(hits) == 1 else ""}
 
 
 # ---------- model calls (OpenAI-compatible chat completions) ----------
@@ -712,39 +1077,33 @@ def overruns(text: str, source: str) -> bool:
     return too_many or len(text) > 2.2 * len(source) + 40
 
 
-def badness(text: str, source: str, rejected: list[str] = ()) -> int:
+def badness(text: str, source: str, rejected: list[str] = (), glossary: list[dict] = ()) -> int:
     """0 = a plausible rendering. Higher = worse: empty, an echo of the Russian, stray Cyrillic,
-    an overrun, an under-run (something dropped), a term the translator has rejected. Used to
-    decide whether a calmer second sample should replace the first."""
+    an overrun, an under-run (something dropped), a term the translator has rejected, a glossary
+    rendering missing. Used to decide whether a calmer second sample should replace the first."""
     cyr = len(re.findall(r"[А-Яа-яЁё]", text))
     lat = len(re.findall(r"[A-Za-z]", text))
     # ponytail: length as an omission proxy; word-alignment coverage if it misses real drops
     short = len(source) > 30 and len(text) < 0.4 * len(source)
     banned = any(re.search(rf"\b{re.escape(r)}\b", text, re.IGNORECASE) for r in rejected)
-    return 4 * (not text) + 2 * (cyr > lat) + (cyr > 0) + overruns(text, source) + short + banned
+    missed = bool(text) and bool(glossary_misses(glossary, text))
+    return (
+        4 * (not text) + 2 * (cyr > lat) + (cyr > 0) + overruns(text, source) + short + banned + missed
+    )
 
 
 @app.post("/api/translate")
 async def translate(req: TranslateReq) -> dict:
     """One model call per voice, in parallel, each at its own temperature; the system prompt is
     the same for all three, the user message names the voice."""
-    glossary, rejected = glossary_for(req.preset, req.sentence)
+    block = style_block(req.preset, req.sentence)
+    glossary, rejected = block["glossary"], block["rejected"]
     banned = [r["en"] for r in rejected]
     voices = voices_for(req.preset)
+    variant, conv = variant_of(req.preset), conventions_of(req.preset)
     system = (
         system_prompt(req.description, voices)
-        + (
-            "Glossary (use these renderings): "
-            + "; ".join(f"{g['ru']} → {g['en']}" for g in glossary)
-            + "\n"
-            if glossary
-            else ""
-        )
-        + (
-            "Do NOT use: " + "; ".join(f"“{r['en']}” for {r['ru']}" for r in rejected) + "\n"
-            if rejected
-            else ""
-        )
+        + style_prompt(block)
         + (f"Additional guidance from the translator: {req.guidance}\n" if req.guidance else "")
         + (
             "Reply with the translation only: no quotes around it, no commentary."
@@ -766,7 +1125,7 @@ async def translate(req: TranslateReq) -> dict:
         user += f"Context — your English so far (continue its voice): {req.para_en[-1500:]}\n"
     user += f"\nTranslate ONLY the sentence between <<< and >>>, nothing else:\n<<< {req.sentence} >>>\n"
 
-    async def one(k: str) -> tuple[str, str]:
+    async def one(k: str) -> tuple[str, str, dict]:
         ask = user + (
             f"\nVoice {k} — render it in voice {k}: {voices[k]}\n"
             "Output the translation of that one sentence only — the same number of sentences as "
@@ -784,20 +1143,29 @@ async def translate(req: TranslateReq) -> dict:
             return str(out.get("text", "")).strip()
 
         text = await sample(temp)
-        bad = badness(text, req.sentence, banned)
+        bad = badness(text, req.sentence, banned, glossary)
         for t in (min(temp, 0.4), 0.0):  # looped, echoed or riffing: retries never hotter
             if not bad:
                 break
             again = await sample(t)
-            bad2 = badness(again, req.sentence, banned)
+            bad2 = badness(again, req.sentence, banned, glossary)
             if bad2 < bad or (bad2 == bad and len(again) < len(text)):
                 text, bad = again, bad2
-        return k, text
+        text, respelt = respell(text, variant)  # spelling is fixed, not retried
+        checks = {  # what the deterministic checks saw, for the golden run's counters
+            "spelling": respelt,
+            "missed": len(glossary_misses(glossary, text)),
+            "banned": sum(bool(re.search(rf"\b{re.escape(r)}\b", text, re.IGNORECASE)) for r in banned),
+            "punct": punct_violations(text, conv),
+        }
+        return k, text, checks
 
-    return dict(await asyncio.gather(*(one(k) for k in "ABC"))) | {
+    done = await asyncio.gather(*(one(k) for k in "ABC"))
+    return {k: text for k, text, _ in done} | {
         "glossary": glossary,
         "rejected": rejected,
         "examples": examples,
+        "checks": {k: c for k, _, c in done},
     }
 
 
@@ -823,7 +1191,7 @@ async def alternatives(req: AltReq) -> dict:
     term = t[req.start : req.end]
     if not term.strip():
         raise HTTPException(400, "empty span")
-    _, rejected = glossary_for(req.preset, req.sentence)
+    block = style_block(req.preset, req.sentence)
     system = (
         "You are a literary translator from Russian into British English.\n\n"
         + (
@@ -831,12 +1199,12 @@ async def alternatives(req: AltReq) -> dict:
             if req.description
             else ""
         )
+        + style_prompt(block)
         + "The translator is revising one span of their English draft, marked [[like this]]. "
         "Propose 8 alternative renderings for that span only: drop-in replacements that fit the "
         "grammar of the sentence, ranging from the plain to the bold, each different from the "
         "original and from each other. Single words or short phrases.\n"
-        + ("Do NOT use: " + "; ".join(r["en"] for r in rejected) + "\n" if rejected else "")
-        + 'Reply with JSON only: {"alternatives": ["...", "..."]}'
+        'Reply with JSON only: {"alternatives": ["...", "..."]}'
     )
     user = (
         f"RUSSIAN ORIGINAL:\n{req.sentence}\n\n"
@@ -847,7 +1215,7 @@ async def alternatives(req: AltReq) -> dict:
     seen = {term.strip().lower()}
     alts = []
     for a in out.get("alternatives", []):
-        a = str(a).strip().strip("[]")
+        a = respell(str(a).strip().strip("[]"), variant_of(req.preset))[0]
         if a and a.lower() not in seen:
             seen.add(a.lower())
             alts.append(a)
@@ -933,12 +1301,20 @@ async def check(req: CheckReq) -> dict:
     edit: an editor's changes against the Russian, as hunks to accept one by one. notes: an
     informant's observations, no text returned."""
     system = REVIEW[req.mode]
-    if req.mode != "grammar":  # the editor and the informant must know what the translator is doing
+    block = style_block(req.preset, req.source)
+    if req.mode == "grammar":  # its brief is not to touch style: the conventions line alone
+        system += "\n" + style_prompt(block, rules=False, terms=False)
+    else:  # the editor and the informant must know what the translator is doing
         if desc := description_of(req.preset):
             system += f"\nAbout this translation, in the translator's words (what it asks for is a choice, not an error): {desc}"
-        glossary, _ = glossary_for(req.preset, req.source)
-        if glossary:
-            system += "\nGlossary: " + "; ".join(f"{g['ru']} → {g['en']}" for g in glossary)
+        system += "\n" + style_prompt(block, notes=True)
+        if req.mode == "edit" and (missed := glossary_misses(block["glossary"], req.text)):
+            system += (
+                "Glossary renderings absent from the English — if the term really is in the "
+                "Russian here, propose the fix as a change: "
+                + "; ".join(map(term_line, missed))
+                + "\n"
+            )
     user = (
         f"RUSSIAN ORIGINAL{' (context only)' if req.mode == 'grammar' else ''}:\n{req.source}\n\n"
         if req.source
@@ -951,6 +1327,7 @@ async def check(req: CheckReq) -> dict:
     temp = 0.2 if req.mode == "grammar" else 0.0
     out = await llm_json(req.model, system, user, CHECK_SCHEMA, temp, cap)
     corrected = str(out.get("corrected", req.text)).strip("\n") or req.text
+    corrected = respell(corrected, variant_of(req.preset))[0]
     notes = [str(n) for n in out.get("notes", []) if n]
     return {"corrected": corrected, "issues": hunks(req.text, corrected), "notes": notes}
 

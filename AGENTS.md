@@ -27,6 +27,11 @@ never replace the symlink with a real file.
 - Model output is untrusted: keep the Cyrillic-leak, overrun and JSON-schema checks on every
   model call.
 - Prompt/temperature/context changes are gated by the golden set: README "Evaluating".
+- Style in two layers: `store/style.md` + `store/glossary.yaml` (house), project `config.md`
+  overrides by `##` heading. One `style_block()` feeds every model call (grammar: conventions
+  only). Conventions are checked in code (`respell`, `punct_violations`, `glossary_misses`),
+  never asked for in prose; spelling is fixed server-side, not retried. `badPunct` in app.js
+  mirrors `punct_violations`; change both.
 
 ## Boundaries
 

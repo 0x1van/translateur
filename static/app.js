@@ -41,7 +41,7 @@
     const saved = JSON.parse(localStorage.getItem(voiceKey(p.name)) || 'null');
     const freedom = { ...DEFAULT_FREEDOM, ...(saved?.freedom || {}) };
     for (const k in freedom) if (!(freedom[k] in FREEDOM)) freedom[k] = 'free';  // e.g. the retired 'wild'
-    return { name: p.name, description: p.description, voices: p.voices, freedom, blind: !!saved?.blind };
+    return { name: p.name, description: p.description, voices: p.voices, conventions: p.conventions || {}, freedom, blind: !!saved?.blind };
   }
 
   // ---------- boot ----------
@@ -49,8 +49,9 @@
     presets = await api('/api/presets');
     fillProjectSelect();
     presetSel.value = localStorage.getItem('preset') || presets[0].name;
-    presetSel.onchange = () => localStorage.setItem('preset', presetSel.value);
+    presetSel.onchange = () => { localStorage.setItem('preset', presetSel.value); loadSpelling(); };
     fillProjectSelect();
+    loadSpelling();
     try {
       const models = await api('/api/models');
       modelSel.innerHTML = models.map(m => `<option>${esc(m)}</option>`).join('');
@@ -123,6 +124,7 @@
     history.replaceState(null, '', '/' + slug);
     worksList.querySelectorAll('.work-item').forEach(b => b.classList.toggle('active', b.dataset.slug === slug));
     presetSel.value = work.project || 'plain';  // the work's project is the current project
+    loadSpelling();
     const group = worksList.querySelector(`.work-item[data-slug="${CSS.escape(slug)}"]`)?.closest('details.proj');
     if (group) group.open = true;
     let n = 0;
@@ -145,19 +147,33 @@
      then it is the textarea. Every piece carries its offset so a click can place the caret. */
   const EN_TOK = /[A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё'’-]*|[^A-Za-zА-Яа-яЁё]+/g;
   const EN_BOUND = /([.!?…]["»”)]*)\s+(?=[«"“(]?[A-ZА-ЯЁ]|[—–-]\s+[«"“(]?[A-ZА-ЯЁ])/g;  // = split_sentences
-  /* US → UK spelling: the unambiguous words only (program, meter, check, tire are left alone; -ize
-     is fine, Oxford). Model output is converted before it is shown; the pane underlines what you
-     typed yourself, and the ⋯ menu converts a paragraph. */
-  const UK = { color: 'colour', honor: 'honour', humor: 'humour', favor: 'favour', favorite: 'favourite', behavior: 'behaviour', neighbor: 'neighbour', labor: 'labour', harbor: 'harbour', rumor: 'rumour', savor: 'savour', vigor: 'vigour', armor: 'armour', endeavor: 'endeavour', gray: 'grey', center: 'centre', theater: 'theatre', liter: 'litre', fiber: 'fibre', somber: 'sombre', defense: 'defence', offense: 'offence', pretense: 'pretence', catalog: 'catalogue', dialog: 'dialogue', analyze: 'analyse', paralyze: 'paralyse', pajamas: 'pyjamas', plow: 'plough', mold: 'mould', jewelry: 'jewellery', skeptic: 'sceptic', aluminum: 'aluminium', mustache: 'moustache' };
-  const UK_RE = new RegExp(`\\b(?:(${Object.keys(UK).map(k => k.replace(/e$/, 'e?')).join('|')})(s|ed|ing|ful|less|ly|ness|ism|ist|al)?|(travel|cancel|marvel|model|fuel|label|signal|quarrel|counsel)(ed|ing|er|ers))\\b`, 'gi');
-  const toUK = t => t.replace(UK_RE, (m, stem, suf = '', l, lsuf) => {
-    let uk = UK[stem?.toLowerCase()] || UK[stem?.toLowerCase() + 'e'] || '';  // analyz-ing
-    if (l) uk = l + 'l' + lsuf;
-    else { if (suf && /^[ei]/.test(suf) && uk.endsWith('e')) uk = uk.slice(0, -1); uk += suf; }  // centred, analysing
-    return /^[A-Z]/.test(m) ? uk[0].toUpperCase() + uk.slice(1) : uk;
-  });
-  const tok = (t, base) => [...t.matchAll(EN_TOK)].map(m =>
-    `<span${/^[A-Za-zА-Яа-яЁё]/.test(m[0]) ? ` class="w${toUK(m[0]) !== m[0] ? ' us' : ''}"` : ''} data-a="${base + m.index}">${esc(m[0])}</span>`).join('');
+  /* Spelling: the project's declared variant (en-GB-ise by default) has a table of the other forms
+     (VarCon, via /api/spelling). Model output is converted before it is shown; the pane underlines
+     what you typed yourself, and the ⋯ menu converts a paragraph. No markers until it has loaded. */
+  let SPELL = {}, SPELL_RE = null, spellVariant = '';
+  async function loadSpelling() {
+    const v = currentVoice().conventions.spelling || 'en-GB-ise';
+    if (v === spellVariant) return;
+    spellVariant = v;
+    try { SPELL = await api('/api/spelling/' + encodeURIComponent(v)); } catch (e) { SPELL = {}; }
+    const keys = Object.keys(SPELL);
+    SPELL_RE = keys.length ? new RegExp(`\\b(?:${keys.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})\\b`, 'gi') : null;
+    if (work) grid.querySelectorAll('.cell.tr:not(.editing)').forEach(view);
+  }
+  const toUK = t => SPELL_RE ? t.replace(SPELL_RE, m => { const uk = SPELL[m.toLowerCase()] || m; return /^[A-Z]/.test(m) ? uk[0].toUpperCase() + uk.slice(1) : uk; }) : t;
+  /* Quotes and dashes against the declared conventions: the same rules as punct_violations in app.py. */
+  const DASH_WRONG = { 'spaced-en': /—| - /g, 'spaced-em': / – | - |(?<=\w)—(?=\w)/g, em: / – | - | — /g };
+  function badPunct(s, before, c) {
+    if (s.includes('"') || (c.quotes === 'single' ? /[“”]/.test(s) : c.quotes === 'double' && /(^|\s)‘/.test(s))) return true;
+    for (const m of s.matchAll(DASH_WRONG[c.dash] || /(?!)/g)) {
+      const i = m[0].indexOf('—');
+      if (i >= 0 && c.dialogue === 'dash' && /(^|[.!?…])[\s”»]*$/.test(before + s.slice(0, m.index + i))) continue;
+      return true;
+    }
+    return false;
+  }
+  const tok = (t, base, c = currentVoice().conventions) => [...t.matchAll(EN_TOK)].map(m =>
+    `<span class="${/^[A-Za-zА-Яа-яЁё]/.test(m[0]) ? `w${toUK(m[0]) !== m[0] ? ' us' : ''}` : badPunct(m[0], t.slice(0, m.index), c) ? 'pn' : ''}" data-a="${base + m.index}">${esc(m[0])}</span>`).join('');
   function view(cell) {
     const v = $('textarea.tr', cell).value, p = $('p.en', cell), row = cell.closest('.row');
     if (!v.trim()) { p.innerHTML = '<span class="ph" data-a="0">…</span>'; return; }
@@ -266,10 +282,16 @@
       const node = r?.offsetNode || r?.startContainer, span = node?.parentElement?.closest('[data-a]');
       return edit(cell, span && !span.matches('.ph') ? +span.dataset.a + (r.offset ?? r.startOffset) : undefined);
     }
-    const w = e.target.closest('.w');
-    if (w) return showDictionary(w);
     const ru = e.target.closest('p.ru');
-    if (ru) return editSource(ru.closest('.cell.src'));
+    if (ru) {  // a selected phrase → glossary head; a word → dictionary; elsewhere → edit
+      const sel = getSelection(), phrase = sel.isCollapsed || !ru.contains(sel.anchorNode) ? '' : sel.toString().trim().replace(/^[^А-Яа-яЁё]+|[^А-Яа-яЁё]+$/g, '');
+      if (/\s/.test(phrase)) {
+        const r = sel.getRangeAt(0).getBoundingClientRect();
+        return showPop(`<h4 lang="ru">${esc(phrase)}</h4>` + glossaryForm(phrase, ru.closest('.row')), r.left + scrollX, r.bottom + scrollY);
+      }
+      const w = e.target.closest('.w');
+      return w ? showDictionary(w) : editSource(ru.closest('.cell.src'));
+    }
     const rev = e.target.closest('.more [data-mode]');
     if (rev) { rev.closest('details').open = false; return review(rev.closest('.row'), rev.dataset.mode); }
     const uk = e.target.closest('.uk');
@@ -441,6 +463,24 @@
   });
 
   const POS = { n: 'noun', v: 'verb', a: 'adj', s: 'adj', r: 'adv' };  // WordNet part-of-speech codes
+
+  /* Glossary: a rendering for a Russian head (a word's lemma or a selected phrase), prefilled from
+     the English selection in the same row. The English pane's form picks the head from the aligned
+     Russian sentence instead. Both go to the project's glossary.yaml (house when no project). */
+  function glossaryForm(ru, row, en = '') {
+    const ta = row && $('textarea.tr', row), sel = ta?.sel && ta.sel[0] !== ta.sel[1] ? ta.value.slice(ta.sel[0], ta.sel[1]).trim() : '';
+    return `<form class="gl" data-ru="${esc(ru)}"><span class="tag">glossary · ${esc(presetSel.value)}</span><input name="en" placeholder="english" value="${esc(en || sel)}" required autocomplete="off"><button value="vocabulary">add</button></form>`;
+  }
+  pop.addEventListener('submit', async e => {
+    e.preventDefault();
+    const f = e.target, kind = e.submitter?.value || 'vocabulary';
+    try {
+      const r = await api('/api/glossary', { method: 'POST', body: { project: presetSel.value === 'plain' ? '' : presetSel.value,
+        russian: f.dataset.ru ?? f.elements.ru.value, english: f.dataset.en ?? f.elements.en.value, kind, slug: work?.slug || '' } });
+      setStatus(`${kind === 'rejected' ? 'rejected' : 'glossary'} · ${r.russian} → ${r.english} · ${r.file}`);
+      pop.hidden = true;
+    } catch (err) { setStatus(err.message, true); }
+  });
   const chips = (list, tag = 'button') => list.map(s => `<${tag} type="button" class="syn">${esc(s)}</${tag}>`).join(' ');
 
   /* Russian pane: click a word → dictionary (click a translation to insert it into the English
@@ -457,7 +497,8 @@
           `<li>${e.lemma !== d.lemmas[0] ? `<span lang="ru">${esc(e.lemma)}</span> ` : ''}${
             e.senses.length ? `<span class="sense" lang="ru">${esc(e.senses.join(' | '))}</span> ` : ''}${chips(e.translations)}</li>`).join('') + '</ul>'
           : '<p class="none">nothing in the dictionary ·</p>') +
-        (t.synonyms.length ? `<section lang="ru"><span class="tag">related words (ru)</span>${chips(t.synonyms, 'span')}</section>` : ''), x, y);
+        (t.synonyms.length ? `<section lang="ru"><span class="tag">related words (ru)</span>${chips(t.synonyms, 'span')}</section>` : '') +
+        glossaryForm(d.lemmas[0] || d.word, row), x, y);
       pop.onclick = ev => { const s = ev.target.closest('button.syn'); if (s) { insert(row, s.textContent); pop.hidden = true; } };
     } catch (e) { showPop(`<p class="none">${esc(e.message)}</p>`, x, y); }
   }
@@ -474,8 +515,14 @@
     const term = v.slice(a, b);
     if (!/[A-Za-z]/.test(term) || term.length < 2) { pop.hidden = true; return; }
     showPop(`<h4>${esc(term)}</h4><span class="tag">alternatives · ${esc(modelSel.value)} · click to replace</span>
-      <section class="alts"><p class="thinking">thinking</p></section><section class="wn"></section><section class="moby"></section>`, x, y);
-    const alts = $('.alts', pop), wnBox = $('.wn', pop), moby = $('.moby', pop);
+      <section class="alts"><p class="thinking">thinking</p></section><section class="wn"></section><section class="moby"></section><section class="gl"></section>`, x, y);
+    const alts = $('.alts', pop), wnBox = $('.wn', pop), moby = $('.moby', pop), glBox = $('.gl', pop);
+    // glossary: the Russian sentence in the same position as the one the span sits in; its words as heads
+    const i = +ta.closest('.row').dataset.i, j = enSpans(v).findIndex(s => a >= s.a && a < s.b);
+    api(`/api/glossary/heads?sentence=${encodeURIComponent(work.sentences[i][j] ?? work.source[i])}&english=${encodeURIComponent(term)}`).then(h => {
+      if (h.words.length) glBox.innerHTML = `<form class="gl" data-en="${esc(term)}"><span class="tag">glossary · ${esc(presetSel.value)} · “${esc(term)}” for</span><select name="ru" lang="ru">${
+        h.words.map(w => `<option${w === h.match ? ' selected' : ''}>${esc(w)}</option>`).join('')}</select><button value="vocabulary">add</button><button value="rejected">reject</button></form>`;
+    }).catch(() => {});
     pop.onclick = ev => {
       const s = ev.target.closest('.syn');
       if (s) { ta.setRangeText(s.textContent, a, b, 'select'); ta.sel = null; grow(ta); save(); pop.hidden = true; }

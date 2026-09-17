@@ -120,9 +120,13 @@ async def run(name: str, model: str, n: int, freedom: dict[str, float]) -> None:
                 **{k: out[k] for k in "ABC"},
                 "examples": out["examples"],
                 "bad": {
-                    k: appmod.badness(out[k], it["ru"], [r["en"] for r in out["rejected"]])
+                    k: appmod.badness(
+                        out[k], it["ru"], [r["en"] for r in out["rejected"]], out["glossary"]
+                    )
                     for k in "ABC"
                 },
+                "checks": out["checks"],
+                "matched": len(out["glossary"]),
                 "calls": calls[key(it)],
             }
             with path.open("a") as f:  # one writer per process; a line is atomic at this size
@@ -187,10 +191,32 @@ def stats(name: str, comet: bool = False) -> None:
     for k in "ABC":
         s = summary(rows, k, metric)
         print(f"{k:6}{100 * s['bad']:7.0f}{s['len']:7.2f}{s['score']:8.1f}")
+    print(checks_line(rows))
 
 
 def retry_rate(rows: list[dict]) -> float:
     return sum(r["calls"] - 3 for r in rows) / (3 * len(rows))
+
+
+def checks_line(rows: list[dict]) -> str:
+    """The deterministic checks over a run, all voices together: glossary hit rate over the
+    entries that matched, rejected terms used, spellings the server fixed and quote/dash
+    violations per 1k words of output."""
+    if not all("checks" in r for r in rows):
+        return "checks: not recorded in this run"
+    c: Counter = Counter()
+    words = matched = 0
+    for r in rows:
+        for k in "ABC":
+            c.update(r["checks"][k])
+            words += len(r[k].split())
+        matched += 3 * r.get("matched", 0)
+    hit = f"{100 * (1 - c['missed'] / matched):.0f}% of {matched}" if matched else "nothing matched"
+    per_k = 1000 / max(words, 1)
+    return (
+        f"checks: glossary hit {hit}; rejected used {c['banned']}; "
+        f"spelling fixed {c['spelling'] * per_k:.1f}/1k words; quotes+dashes {c['punct'] * per_k:.1f}/1k words"
+    )
 
 
 def compare(a: str, b: str, comet: bool = False) -> None:
@@ -220,6 +246,7 @@ def compare(a: str, b: str, comet: bool = False) -> None:
             f"{wins:6}/{decided:<4}"
             f"{100 * lo:8.0f}–{100 * hi:.0f}%"
         )
+    print(f"{a}: {checks_line(rows_a)}\n{b}: {checks_line(rows_b)}")
 
 
 # ---------- picks ----------

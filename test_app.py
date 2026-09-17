@@ -133,8 +133,50 @@ PROJECTS.mkdir()
 (PROJECTS / "demo" / "translation" / "config.md").write_text(
     "# Demo\n\n## Translation philosophy\nFaithful.\n\n## Variant scheme\n"
     "- **A — Literal (control):** Word for word.\n- **B — House voice:** Quiet precision.\n"
-    "- **C — Alternative:** Another cadence.\n\n## Output shape\nignored\n"
+    "- **C — Alternative:** Another cadence.\n\n## Output shape\nignored\n\n"
+    "## Conventions\n(only what differs)\nquotes: single\n\n## Rules\n- Demo rule.\n\n"
+    "## Departures from house style\nSingle quotes here.\n"
 )
+# the house layer: store/style.md and store/glossary.yaml, under every project
+(STORE / "style.md").write_text(
+    "# House\n\n<!-- a hint -->\nQuiet precision; nothing showy.\n\n## Conventions\n"
+    "spelling: en-GB-ise\n- **quotes**: double\ndash: spaced-em\ndialogue: dash\n\n"
+    "## Rules\n- Keep the sentence length.\n- Prefer the plain word.\n\n## Notes\nThe house notes.\n"
+)
+(STORE / "glossary.yaml").write_text(
+    "vocabulary:\n  - russian: жизнь\n    english: life\n    rationale: plain\n    first_used: pfu\n"
+    "  - russian: окно\n    english: pane\nrejected:\n  - term: existence\n    for: жизнь\n    use_instead: life\n"
+)
+VARCON = """# abettor <verified> (level 50)
+A Bv C: abettor / Av B: abetter
+# analyze (level 35)
+A C: analyze / B Cv: analyse
+A C: analyzing / B Cv: analysing
+# center (level 20)
+A: center / B: centre
+A: centered / B: centred
+# check (level 20)
+A CV: check / B C: cheque | <N> bank
+# color (level 10)
+A Cv DV: color / B C D: colour
+A Cv DV: colorful / B C D: colourful
+# dialog (level 40)
+A: dialog / B: dialogue
+A: dialogs / B: dialogues
+# gray (level 20)
+A Cv: gray / AV B C: grey
+# model (level 20)
+A: modeled / B: modelled
+# organize (level 20)
+A Z: organize / B: organise
+# theater (level 20)
+A: theater / B: theatre
+# abolitionize (level 95)
+A Z: abolitionize / B: abolitionise
+"""
+import fetch_data
+
+(STORE / "spelling.json").write_text(json.dumps(fetch_data.spelling_tables(VARCON)))
 (PROJECTS / "demo" / "translation" / "glossary.yaml").write_text(
     "vocabulary:\n  - russian: окно\n    english: window\n"
     "  - russian: клоп / насекомое\n    english: bug\n"
@@ -150,6 +192,7 @@ os.environ.update(
     WORKS_DIR=str(WORKS),
     PROJECTS_DIR=str(PROJECTS),
     LLM_BASE_URL=f"http://127.0.0.1:{OLLAMA_PORT}",
+    SPELLING_JSON=str(STORE / "spelling.json"),
 )
 
 import app as appmod
@@ -419,16 +462,32 @@ def test_presets_parse_project_config():
     assert appmod.description_of("demo") == "Chekhov, quiet, no modernising."
     prompt = appmod.system_prompt(appmod.description_of("demo"), p["demo"]["voices"])
     assert "About this project" in prompt and "- B — House voice" in prompt and "JSON" not in prompt
-    assert p["demo"]["glossary"][0] == {"ru": "окно", "en": "window"}
+    # house glossary first, the project's after it and winning on the same head; rejected add up
+    assert p["plain"]["glossary"][1] == {"ru": "окно", "en": "pane"}
+    assert [g["en"] for g in p["demo"]["glossary"]][:2] == ["life", "window"]
+    assert p["demo"]["rejected"][0] == {"ru": "жизнь", "en": "existence", "use": "life"}
     g, r = appmod.glossary_for("demo", "Он сидел у окна.")
     assert g == [{"ru": "окно", "en": "window"}] and r == [{"ru": "окно", "en": "casement"}]
+    # style: house voice (comments dropped), conventions overridden key by key, rules and notes added
+    assert p["demo"]["voice"] == "Quiet precision; nothing showy."
+    assert p["demo"]["conventions"] == {
+        "spelling": "en-GB-ise",
+        "quotes": "single",
+        "dash": "spaced-em",
+        "dialogue": "dash",
+    }
+    assert p["plain"]["conventions"]["quotes"] == "double"
+    assert p["demo"]["rules"] == ["Keep the sentence length.", "Prefer the plain word.", "Demo rule."]
+    assert p["demo"]["notes"] == "The house notes.\n\nSingle quotes here."
+    assert p["plain"]["rules"] == ["Keep the sentence length.", "Prefer the plain word."]
     # `a / b` heads match either alternative; for_russian rejected entries are read, and their
     # prose use_instead is NOT turned into a glossary rendering; original/modern entries count
     assert appmod.glossary_for("demo", "Стать насекомым.")[0] == [
         {"ru": "клоп / насекомое", "en": "bug"}
     ]
     g, r = appmod.glossary_for("demo", "Где выгода?")
-    assert g == [{"ru": "выгода", "en": "metrics"}] and r == [{"ru": "выгода", "en": "advantage"}]
+    assert g == [{"ru": "выгода", "en": "metrics"}]
+    assert r == [{"ru": "выгода", "en": "advantage", "use": "context-dependent"}]
     assert appmod.glossary_for("demo", "Ели щи.")[0] == [{"ru": "щи", "en": "shchi"}]
     # multi-word heads must be contiguous: "ученье свет" does not fire on "ученье — не свет"…
     assert appmod.glossary_for("demo", "Ученье, а не свет.")[0] == []
@@ -438,11 +497,205 @@ def test_presets_parse_project_config():
     assert appmod.glossary_for("demo", "Читал Бокля.")[0] == [
         {"ru": "Бокль (Henry Thomas Buckle)", "en": "Pinker"}
     ]
-    assert appmod.glossary_for("demo", "Жизнь прошла.") == ([], [])
+    assert appmod.glossary_for("demo", "Пошёл дождь.") == ([], [])
     assert appmod.glossary_for("demo", "Отдан в ученье к сапожнику.") == ([], [])  # partial phrase
     assert appmod.glossary_for("demo", "Ученье — свет.")[0] == [
         {"ru": "ученье свет", "en": "learning enlightens"}
     ]
+
+
+def test_style_block_and_prompt(monkeypatch):
+    b = appmod.style_block("demo", "Жизнь прошла!")
+    assert b["glossary"] == [{"ru": "жизнь", "en": "life", "why": "plain", "first": "pfu"}]
+    assert b["rejected"] == [{"ru": "жизнь", "en": "existence", "use": "life"}]
+    full = appmod.style_prompt(b, notes=True)
+    assert full.startswith("The translator's voice, in their words:\nQuiet precision")
+    assert "Conventions: British spelling with -ise (colour, centre, organise); single quotation" in full
+    assert "Rules:\n- Keep the sentence length.\n- Prefer the plain word.\n- Demo rule.\n" in full
+    assert "Notes from the style guide:\nThe house notes." in full
+    assert "Glossary (use these renderings): жизнь → life (plain; first used in pfu)\n" in full
+    assert full.endswith("Do NOT use: “existence” for жизнь (use instead: life)\n")
+    # the stable prefix comes first, the per-text lines last
+    assert full.index("Rules:") < full.index("Glossary")
+    grammar = appmod.style_prompt(b, rules=False, terms=False)
+    assert grammar.startswith("Conventions:") and "Rules" not in grammar and "life" not in grammar
+    assert appmod.style_prompt(appmod.style_block("plain", "Конец.")) == (
+        "The translator's voice, in their words:\nQuiet precision; nothing showy.\n\n"
+        "Conventions: British spelling with -ise (colour, centre, organise); double quotation "
+        "marks “like this”, single only inside them; spaced em dashes — like this — for breaks "
+        "in prose; dialogue opened with a dash, as in the Russian.\n"
+        "Rules:\n- Keep the sentence length.\n- Prefer the plain word.\n"
+    )
+    assert appmod.style_prompt(appmod.style_block("nope", "Конец.")) == ""
+    monkeypatch.setattr(appmod, "STYLE_BLOCK", False)  # the golden comparison's "without"
+    off = appmod.style_block("demo", "Жизнь прошла!")
+    assert off["rules"] == [] and off["conventions"] == "" and off["glossary"] == b["glossary"]
+    # every call gets the block: the translate prompt, the alternatives prompt, the passes
+    monkeypatch.setattr(appmod, "STYLE_BLOCK", True)
+    seen = []
+    real = appmod.llm_json
+
+    async def spy(model, system, user, *a):
+        seen.append(system)
+        return await real(model, system, user, *a)
+
+    monkeypatch.setattr(appmod, "llm_json", spy)
+    req = appmod.TranslateReq(model="fake-9b", preset="demo", sentence="Жизнь прошла!")
+    out = asyncio.run(appmod.translate(req))
+    assert "Rules:\n- Keep" in seen[0] and "(use instead: life)" in seen[0]
+    assert out["checks"]["A"] == {"spelling": 0, "missed": 1, "banned": 0, "punct": 0}
+    seen.clear()
+    alt = appmod.AltReq(
+        model="fake-9b", preset="demo", sentence="Жизнь прошла!", translation="Life went.", start=0, end=4
+    )
+    asyncio.run(appmod.alternatives(alt))
+    assert "Rules:\n- Keep" in seen[0] and "Do NOT use: “existence”" in seen[0]
+    for mode, want, not_want in (
+        ("grammar", "Conventions:", "Rules"),
+        ("edit", "Notes from the style guide", "absent from the English"),
+        ("notes", "Rules:\n- Keep", "absent from the English"),
+    ):
+        seen.clear()
+        asyncio.run(
+            appmod.check(
+                appmod.CheckReq(
+                    model="fake-9b", text="Life passed.", source="Жизнь прошла!", preset="demo", mode=mode
+                )
+            )
+        )
+        assert want in seen[0] and not_want not in seen[0], mode
+    seen.clear()
+    asyncio.run(
+        appmod.check(
+            appmod.CheckReq(
+                model="fake-9b", text="It passed.", source="Жизнь прошла!", preset="demo", mode="edit"
+            )
+        )
+    )
+    assert "absent from the English — if the term really is in the Russian here" in seen[0]
+
+
+def test_glossary_misses_and_badness():
+    g = [
+        {"ru": "мужик", "en": "peasant men (pl.) / a peasant (sg.)", "alts": ["peasant lads"]},
+        {"ru": "карась", "en": "crucian carp"},
+        {"ru": "x", "en": "(kept)"},  # no rendering to look for: never a miss
+    ]
+    miss = lambda t: [x["ru"] for x in appmod.glossary_misses(g, t)]
+    assert miss("The peasants fished crucian carps.") == []
+    assert miss("Peasant lads, a carp.") == ["карась"]
+    assert miss("A bloke and a fish.") == ["мужик", "карась"]
+    assert miss("The crucian, then the carp.") == ["мужик", "карась"]  # adjacent words only
+    src = "Мужик поймал карася."
+    assert appmod.badness("The peasant caught a crucian carp.", src, [], g) == 0
+    assert appmod.badness("The man caught a fish.", src, [], g) == 1
+    assert appmod.badness("", src, [], g) == 4  # empty is empty, not also a miss per term
+
+
+def test_spelling_and_punct():
+    import fetch_data
+
+    t = fetch_data.spelling_tables(VARCON)
+    assert t["B"]["color"] == "colour" and t["B"]["organize"] == "organise"
+    assert t["Z"]["organise"] == "organize" and t["Z"]["color"] == "colour"
+    assert "check" not in t["B"] and "abettor" not in t["B"]  # a sense note; a British variant
+    assert "abolitionize" not in t["B"]  # level 95
+    assert appmod.respell("Gray color, COLOR, checks and colours.", "en-GB-ise") == (
+        "Grey colour, Colour, checks and colours.",
+        3,
+    )
+    assert appmod.respell("Organise it.", "en-GB-oxendict") == ("Organize it.", 1)
+    assert appmod.respell("Organise it.", "en-GB-ise") == ("Organise it.", 0)
+    house = appmod.conventions_of("plain")  # double quotes, spaced em dashes, dialogue dashes
+    assert appmod.punct_violations("He said “yes” — then left.", house) == 0
+    assert appmod.punct_violations("— Well? — he said. — Go.", house) == 0
+    assert appmod.punct_violations("He said ‘yes’ – then left.", house) == 2
+    assert appmod.punct_violations('"Yes."', house) == 2
+    assert appmod.punct_violations("He said—no.", house) == 1
+    single = appmod.conventions_of("demo")  # single quotes, otherwise the house
+    assert appmod.punct_violations("He said “yes” — then left.", single) == 2
+    en = {"quotes": "single", "dash": "spaced-en", "dialogue": "quotes"}
+    assert appmod.punct_violations("‘Well?’ – he said. — Go.", en) == 1  # every em dash is a break
+    assert appmod.punct_violations("a - b", en) == 1
+    assert appmod.punct_violations("—Well.", en | {"dialogue": "dash"}) == 0
+
+
+def test_glossary_upsert():
+    up = appmod._yaml_upsert
+    same = lambda head: (lambda d: d.get("russian") == head)
+    # a hand-written file: comments and layout survive, the item lands at the end of its list
+    text = "# my terms\n\nvocabulary:\n  - russian: окно\n    english: window\n    notes: ''\n\nrejected:\n  - term: pane\n    for: окно\n"
+    out = up(text, "vocabulary", {"russian": "дверь", "english": "door"}, same("дверь"))
+    assert out == (
+        "# my terms\n\nvocabulary:\n  - russian: окно\n    english: window\n    notes: ''\n"
+        "  - russian: дверь\n    english: door\n\nrejected:\n  - term: pane\n    for: окно\n"
+    )
+    # the same head is merged, the old rendering kept as an alternative
+    out = up(out, "vocabulary", {"russian": "окно", "english": "casement", "first_used": "w"}, same("окно"))
+    assert out.startswith(
+        "# my terms\n\nvocabulary:\n  - russian: окно\n    english: casement\n    notes: ''\n"
+        "    first_used: w\n    alternatives:\n    - window\n  - russian: дверь\n"
+    ) and out.endswith("\nrejected:\n  - term: pane\n    for: окно\n")
+    assert appmod._load_glossary
+    # the scaffold, and a file without the section
+    assert up("vocabulary: []\nrejected: []\n", "rejected", {"term": "x", "for": "у"}, lambda d: False) == (
+        "vocabulary: []\nrejected:\n  - term: x\n    for: у\n"
+    )
+    assert up("vocabulary: []\n", "rejected", {"term": "x", "for": "у"}, lambda d: False) == (
+        "vocabulary: []\n\nrejected:\n  - term: x\n    for: у\n"
+    )
+    assert yaml_ok(out)
+
+
+def yaml_ok(text):
+    import yaml
+
+    return isinstance(yaml.safe_load(text), dict)
+
+
+def test_add_term_endpoint():
+    gpath = PROJECTS / "demo" / "translation" / "glossary.yaml"
+    before = gpath.read_text()
+    try:
+        # a single word is filed under its lemma; the open work is first_used; the cache is cleared
+        r = appmod.add_term(
+            appmod.GlossaryEntry(project="demo", russian="дверью", english="door", slug="demo-work")
+        )
+        assert r == {
+            "ok": True,
+            "russian": "дверь",
+            "english": "door",
+            "file": "projects/demo/translation/glossary.yaml",
+        }
+        assert "  - russian: дверь\n    english: door\n    first_used: demo-work\n" in gpath.read_text()
+        assert appmod.glossary_for("demo", "Он открыл дверь.")[0] == [
+            {"ru": "дверь", "en": "door", "first": "demo-work"}
+        ]
+        assert appmod._git("log", "-1", "--format=%s").stdout.strip() == "demo: glossary дверь → door"
+        # a rejected term carries the preferred rendering as use_instead
+        appmod.add_term(
+            appmod.GlossaryEntry(project="demo", russian="дверь", english="portal", kind="rejected", note="grand")
+        )
+        assert "  - term: portal\n    for: дверь\n    reason: grand\n    use_instead: door\n" in gpath.read_text()
+        assert appmod.glossary_for("demo", "дверь")[1] == [{"ru": "дверь", "en": "portal", "use": "door"}]
+        # a phrase head stays as typed; no project = the house file
+        appmod.add_term(appmod.GlossaryEntry(russian="ученье  свет", english="learning is light"))
+        assert "  - russian: ученье свет\n    english: learning is light\n" in (STORE / "glossary.yaml").read_text()
+        assert appmod.glossary_for("plain", "Ученье — свет.")[0][0]["en"] == "learning is light"
+        with pytest.raises(appmod.HTTPException):
+            appmod.add_term(appmod.GlossaryEntry(project="nope", russian="а", english="b"))
+        with pytest.raises(appmod.HTTPException):
+            appmod.add_term(appmod.GlossaryEntry(russian=" ", english="b"))
+    finally:
+        gpath.write_text(before)
+        (STORE / "glossary.yaml").write_text(
+            "vocabulary:\n  - russian: жизнь\n    english: life\n    rationale: plain\n    first_used: pfu\n"
+            "  - russian: окно\n    english: pane\nrejected:\n  - term: existence\n    for: жизнь\n    use_instead: life\n"
+        )
+        appmod.load_presets.cache_clear()
+    h = appmod.glossary_heads("Он сидел у окна.", "window")
+    assert h["words"] == ["он", "сидеть", "окно"]
+    assert h["match"] == ("окно" if HAVE_DATA else "")
 
 
 @pytest.mark.skipif(not HAVE_DATA, reason="run fetch_data.py")
@@ -891,3 +1144,39 @@ def test_e2e(page, server_url):
         assert "no usable output" in c.inner_text() and c.is_disabled()
         c.click(force=True)
         assert ta2.input_value() == "A of Konets."
+
+    # glossary from the English pane: the popover offers the aligned Russian sentence's words as
+    # heads; "reject" files the term against the chosen one, with the glossary's rendering to use
+    gpath = PROJECTS / "demo" / "translation" / "glossary.yaml"
+    before = gpath.read_text()
+    page.keyboard.press("Escape")
+    ta.evaluate(
+        "t => { t.value = 'He sidel by the window.'; t.dispatchEvent(new Event('input', {bubbles: true})); }"
+    )
+    page.wait_for_function("document.querySelector('#status').textContent.startsWith('saved')")
+    page.keyboard.press("Escape")
+    en0.locator(".w", has_text="sidel").click()
+    page.wait_for_selector("#pop form.gl select")
+    assert page.locator("#pop form.gl select option").all_inner_texts() == ["он", "сидеть", "окно"]
+    page.select_option("#pop form.gl select", "окно")
+    page.locator("#pop form.gl button[value=rejected]").click()
+    page.wait_for_function("document.querySelector('#status').textContent.startsWith('rejected')")
+    assert "  - term: sidel\n    for: окно\n    use_instead: window\n" in gpath.read_text()
+    if HAVE_DATA:
+        # russian pane: the word popover's form, prefilled from the English selection; the same
+        # head is updated, the old rendering kept as an alternative
+        _edit(page, 0)
+        ta.evaluate("t => t.setSelectionRange(3, 8)")  # "sidel"
+        page.locator(".row").nth(0).locator(".cell.src .w", has_text="окна").click()
+        page.wait_for_selector("#pop form.gl")
+        assert page.locator("#pop form.gl").get_attribute("data-ru") == "окно"
+        assert page.input_value("#pop form.gl input[name=en]") == "sidel"
+        page.fill("#pop form.gl input[name=en]", "casement")
+        page.locator("#pop form.gl button").click()
+        page.wait_for_function("document.querySelector('#status').textContent.startsWith('glossary')")
+        assert (
+            "  - russian: окно\n    english: casement\n    first_used: demo-work\n"
+            "    alternatives:\n    - window\n"
+        ) in gpath.read_text()
+    gpath.write_text(before)
+    appmod.load_presets.cache_clear()
