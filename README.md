@@ -44,7 +44,7 @@ adds HTTP basic auth as a fallback.
   and opening one selects its preset. Bulk import example:
   nova-nevedoma's `projects/posts-from-underground/scripts/import_translator.py` (one work per
   chapter, published English aligned to the Russian paragraphs), run with `WORKS_DIR` pointing here.
-- **about project** — a few sentences in your own words about the text and how it should read,
+- **project settings (⚙)** — model, plus a few sentences in your own words about the text and how it should read,
   saved as `projects/<name>/translation/about.md` (seeded from the project's config the first
   time). The app writes the actual prompt around it: role, rules, output format and the three
   voices (the project's own variant scheme from `config.md` if it has one, else the defaults).

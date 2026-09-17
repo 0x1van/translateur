@@ -13,8 +13,7 @@
 <header class="bar">
   <span class="brand">translateur</span>
   <label>project <select id="preset"></select></label>
-  <button id="voices-btn" type="button">about project</button>
-  <label>model <select id="model"></select></label>
+  <button id="voices-btn" type="button" title="project settings" aria-label="project settings">&#9881;&#xFE0E;</button>
   <button id="theme-btn" type="button" aria-label="Toggle dark theme">dark</button>
   <span id="status" class="status" aria-live="polite"></span>
 </header>
@@ -47,6 +46,7 @@
 <dialog id="voices-dialog">
   <form method="dialog" id="voices-form">
     <p class="hint">a few sentences about the text and how you want it to read, in your own words · the app writes the rest of the prompt ·</p>
+    <label>model <select id="model"></select></label>
     <label>about this project <textarea name="description" rows="6" placeholder="Chekhov, 1890s, faithful and unshowy; quiet precision, no modernising."></textarea></label>
     <div class="freedom">
       <label>A freedom <select name="A_freedom"></select></label>

@@ -46,6 +46,7 @@ select, input { border: 1px solid var(--color-border); background: var(--color-b
 .bar label { display: flex; align-items: center; gap: var(--space-xs); color: var(--color-text-muted); }
 .bar select { font-size: 0.7rem; text-transform: none; letter-spacing: 0; max-width: 14rem; }
 .brand { margin-right: auto; }
+#voices-btn { font-size: 1rem; line-height: 1; padding: 0.15rem 0.5rem; }
 .status { color: var(--color-text-muted); min-width: 6rem; text-align: right; }
 .status.err { color: var(--color-error); }
 
