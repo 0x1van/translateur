@@ -13,6 +13,7 @@ never replace the symlink with a real file.
     uv run uvicorn app:app --reload --port 8765   # 8000 is the website dev server
     uv run ruff check . && uv run pytest -q       # ~15s, e2e runs against a fake model
     uv run python qa_live.py [filter]             # slow, real model, own servers; not pytest
+    uv run python eval_golden.py run <name>       # golden set from store/, real model; `compare a b` before/after
 
 ## Decisions (not visible from the code)
 

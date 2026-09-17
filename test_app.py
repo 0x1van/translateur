@@ -1,5 +1,6 @@
 """Unit checks for the text/preset logic plus one Playwright end-to-end pass against a fake Ollama."""
 
+import asyncio
 import json
 import os
 import socket
@@ -230,6 +231,51 @@ def test_picks_are_logged_and_committed():
         check=False,
     ).stdout.strip()
     assert log == "pick: w 0.1 B", log
+
+
+def test_eval_golden(tmp_path, monkeypatch):
+    import eval_golden as ev
+
+    d = WORKS / "golden"
+    d.mkdir()
+    (d / "source.md").write_text("Раз. Два.\n\nТри.\n\nЧетыре. Пять.\n")
+    (d / "translation.md").write_text(
+        "One. Two.\n\nThree.\n\nFour. Five. Six.\n"
+    )  # last misaligned
+    items = [x for x in ev.golden_items() if x["slug"] == "golden"]
+    assert [(x["i"], x["j"], x["ref"]) for x in items] == [
+        (0, 0, "One."),
+        (0, 1, "Two."),
+        (1, 0, "Three."),
+    ]
+    assert (
+        items[1]["prev_ru"] == "Раз."
+        and items[1]["prev_en"] == "One."
+        and items[1]["next_ru"] == ""
+    )
+    assert (
+        items[2]["prev_ru"] == "Два." and items[2]["prev_en"] == "One. Two."
+    )  # across the paragraph
+    assert ev.wilson(0, 0) == (0, 0) and [round(x, 2) for x in ev.wilson(50, 100)] == [0.4, 0.6]
+    assert ev.picks_summary(
+        [
+            {"chosen": "B", "preset": "p", "model": "m", "order": "CBA"},
+            {"chosen": "A", "preset": "p", "model": "m"},
+        ]
+    ) == {
+        "letter": {"A": 1, "B": 1},
+        "preset p": {"A": 1, "B": 1},
+        "model m": {"A": 1, "B": 1},
+        "position": {1: 1},
+    }
+    # a run against the fake model: every item gets three voices, counts and badness
+    monkeypatch.setattr(ev, "EVAL_DIR", tmp_path)
+    asyncio.run(ev.run("t", "fake-9b", 100, {}))
+    rows = ev.load("t")
+    r = rows[("golden", 0, 1)]
+    assert r["A"] == "A of Dva. [prev: One.]" and r["bad"] == {"A": 0, "B": 0, "C": 0}
+    assert r["calls"] == 4  # the fake echoes the Russian at 1.0, so C was retried once
+    ev.compare("t", "t")  # zero deltas, must not crash
 
 
 def test_patch_source_splits_and_realigns():
@@ -564,6 +610,7 @@ def test_e2e(page, server_url):
     en2.click()
     ta2.fill("teh cat. teh dog.")
     page.keyboard.press("Escape")
+
     def check(row):  # "check grammar" lives in the ⋯ menu in the corner of the English cell
         row.locator(".more summary").click()
         assert row.locator(".analyse").is_disabled()  # reserved for the editor pass, not built

@@ -14,6 +14,9 @@ dependencies = [
 
 [dependency-groups]
 dev = ["pytest>=8", "pytest-playwright>=0.6", "ruff>=0.5"]
+eval = [
+    "sacrebleu>=2.6.0",
+]
 
 [tool.ruff]
 line-length = 100
