@@ -41,7 +41,7 @@
     const saved = JSON.parse(localStorage.getItem(voiceKey(p.name)) || 'null');
     const freedom = { ...DEFAULT_FREEDOM, ...(saved?.freedom || {}) };
     for (const k in freedom) if (!(freedom[k] in FREEDOM)) freedom[k] = 'free';  // e.g. the retired 'wild'
-    return { name: p.name, description: p.description, voices: p.voices, freedom };
+    return { name: p.name, description: p.description, voices: p.voices, freedom, blind: !!saved?.blind };
   }
 
   // ---------- boot ----------
@@ -319,14 +319,19 @@
         model: modelSel.value, preset: v.name, description: v.description, freedom,
         sentence: sents[j], para_ru: sents.join(' '), para_en, guidance } });
       for (const k of 'ABC') out[k] = toUK(out[k]);
-      // shuffled per card: a pick then says which voice won, not which button was leftmost
-      const order = ['ABC', 'ACB', 'BAC', 'BCA', 'CAB', 'CBA'][Math.floor(Math.random() * 6)];
+      // shuffled per card: a pick then says which voice won, not which button was leftmost.
+      // draft-blind: A alone first, B and C behind a button; the pick logs what was on screen
+      const blind = v.blind;
+      let seen = blind ? 'A' : 'ABC';
+      const order = blind ? 'A' + (Math.random() < 0.5 ? 'BC' : 'CB') : ['ABC', 'ACB', 'BAC', 'BCA', 'CAB', 'CBA'][Math.floor(Math.random() * 6)];
       $('.thinking', box).outerHTML = [...order].map(k =>
-        `<button type="button" class="variant" data-k="${k}"><b>${k}</b><small>${esc((v.voices[k] || '').split(':')[0])} · ${esc(v.freedom[k])}</small>${out[k] ? esc(out[k]) : '<i class="none">no usable output · try again</i>'}</button>`).join('') +
+        `<button type="button" class="variant" data-k="${k}"${blind && k !== 'A' ? ' hidden' : ''}><b>${k}</b><small>${esc((v.voices[k] || '').split(':')[0])} · ${esc(v.freedom[k])}</small>${out[k] ? esc(out[k]) : '<i class="none">no usable output · try again</i>'}</button>`).join('') +
+        (blind ? '<button type="button" class="reveal">show B and C</button>' : '') +
         (out.glossary.length || out.rejected.length ? `<p class="glossary">${
           out.glossary.map(g => `${esc(g.ru)} → ${esc(g.en)}`).join(' · ')}${
           out.rejected.map(r => ` · not “${esc(r.en)}”`).join('')}</p>` : '');
-      box.querySelectorAll('.variant').forEach(b => { if (out[b.dataset.k]) b.onclick = () => { insert(row, out[b.dataset.k], target, slot); api('/api/pick', { method: 'POST', body: { slug: work.slug, i, j, model: modelSel.value, preset: v.name, freedom, sentence: sents[j], guidance, variants: { A: out.A, B: out.B, C: out.C }, order, chosen: b.dataset.k } }).catch(() => {}); }; else b.disabled = true; });
+      if (blind) $('.reveal', box).onclick = ev => { ev.target.remove(); box.querySelectorAll('.variant[hidden]').forEach(b => { b.hidden = false; }); seen = 'ABC'; };
+      box.querySelectorAll('.variant').forEach(b => { if (out[b.dataset.k]) b.onclick = () => { insert(row, out[b.dataset.k], target, slot); api('/api/pick', { method: 'POST', body: { slug: work.slug, i, j, model: modelSel.value, preset: v.name, freedom, sentence: sents[j], guidance, variants: { A: out.A, B: out.B, C: out.C }, order, chosen: b.dataset.k, blind, seen, examples: out.examples } }).catch(() => {}); }; else b.disabled = true; });
     } catch (e) { if (e.name !== 'AbortError') $('.thinking', box).outerHTML = `<p class="clean">${esc(e.message)}</p>`; }
   }
 
@@ -530,17 +535,19 @@
   $('#voices-btn').onclick = () => {
     const v = currentVoice();
     for (const k of ['A', 'B', 'C']) voicesForm.elements[k + '_freedom'].value = v.freedom[k];
+    voicesForm.elements.blind.checked = v.blind;
     voicesForm.elements.description.value = v.description;
     voicesDlg.showModal();
   };
   $('.reset', voicesForm).onclick = () => {  // freedom back to defaults; the description stays yours
     localStorage.removeItem(voiceKey(presetSel.value));
     for (const k of ['A', 'B', 'C']) voicesForm.elements[k + '_freedom'].value = DEFAULT_FREEDOM[k];
+    voicesForm.elements.blind.checked = false;
   };
   voicesForm.onsubmit = async e => {
     e.preventDefault();
     const f = e.target.elements, name = presetSel.value;
-    localStorage.setItem(voiceKey(name), JSON.stringify({ freedom: { A: f.A_freedom.value, B: f.B_freedom.value, C: f.C_freedom.value } }));
+    localStorage.setItem(voiceKey(name), JSON.stringify({ freedom: { A: f.A_freedom.value, B: f.B_freedom.value, C: f.C_freedom.value }, blind: f.blind.checked }));
     try {
       await api('/api/projects/' + encodeURIComponent(name), { method: 'PUT', body: { description: f.description.value } });
       presets.find(p => p.name === name).description = f.description.value.trim();

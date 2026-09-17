@@ -173,6 +173,8 @@ textarea.src:focus { outline: none; }
 }
 .variant:hover:not(:disabled) { box-shadow: none; background: var(--color-accent); }
 .variant:disabled { cursor: default; }
+.variant[hidden] { display: none; }
+.variants .reveal { margin: var(--space-xs) 0; }
 .variant b { font-family: var(--font-mono); font-size: 0.65rem; margin-right: 0.5rem; color: var(--color-text); }
 .variant .none { color: var(--color-text-muted); font-size: 0.9rem; }
 .variant small { font-family: var(--font-mono); font-size: 0.6rem; color: var(--color-text-muted); margin-right: 0.5rem; }

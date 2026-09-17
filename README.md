@@ -38,7 +38,10 @@ app (web manifest + touch icon, no service worker: the server does the work, not
   click away; a paragraph split keeps its English with the first part.
 - **superscript number** on a sentence — three variants (A/B/C) from the model; click one to
   insert at the cursor / replace the selection / append. Type freely in the right pane; it
-  autosaves to `works/<slug>/translation.md`.
+  autosaves to `works/<slug>/translation.md`. The model also sees up to three of your own
+  earlier renderings of similar sentences from the store (lemma overlap; `OWN_EXAMPLES=0` turns
+  it off); they are logged with the pick. Project settings can switch on **draft-blind**: A alone
+  first, B and C behind a button, so you commit to a reading before the choices anchor you.
 - **click a Russian word** — dictionary (lemma, grammar, WikDict senses; click a translation to insert it) plus Russian near-synonyms (WikDict round trip ru→en→ru).
 - **English pane** — a rendered view with hoverable words until you click into it to type (click past a word, or Escape to leave). Sentences are numbered in step with the Russian; the numbers turn red when a paragraph's sentence counts differ. **Click a word** (or select a phrase while editing) — one popover: the model's alternatives for that span (contextual, sampled wild), WordNet synonyms grouped by sense, and Moby's flat all-senses list folded behind *more*; click any to swap it in.
 - **⋯ menu** at the corner of each English paragraph, one model pass per item: **check grammar**
@@ -78,7 +81,7 @@ it catches a model that drops, echoes or overruns, it cannot rank two good model
     set -a; source .env; set +a
     uv run python eval_golden.py run <name> --model <id>      # ~$0.15 on DeepSeek Pro, ~$1.20 on GPT Sol
     uv run python eval_golden.py compare <a> <b>              # paired delta per voice, wins, Wilson CI
-    uv run python eval_golden.py picks                        # what you actually chose, by voice/position
+    uv run python eval_golden.py picks                        # what you actually chose, by voice/position (Wilson CI per letter)
 
 Keep a change unless a voice's win-share interval sits below 50 % or bad/retry rates rise. Two
 identical runs differ by up to ±2 chrF on B and C, so a mean delta inside that is noise. Same 100
@@ -94,6 +97,8 @@ sentences; chrF for voices A/B/C:
 | 2026-09-17 | deepseek-v4-pro + paragraph context | 44.6 | 51.0 | 40.3 | kept; C overrun 1.28 → 1.20 |
 | 2026-09-17 | + freedom 0.1/0.7/0.8 | 45.2 | 49.6 | 39.2 | kept; B at 0.6 was −2.3 twice, so 0.7 stays |
 | 2026-09-17 | + under-run and rejected-term checks | 44.9 | 49.4 | 41.4 | kept; nothing fires on this set |
+| 2026-09-17 | + own examples (top 3, cosine ≥ 0.3) | 45.1 | 51.9 | 41.6 | kept; fires on 14 of 100, B +8 on those |
+| 2026-09-17 | free text instead of JSON | 44.5 | 50.5 | 42.4 | not kept; all within noise, JSON stays |
 
 Rows below the model block are cumulative: each is the previous row plus one change, on the
 default model.

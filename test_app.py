@@ -52,7 +52,8 @@ class FakeOllama(BaseHTTPRequestHandler):
         if body["model"] == "fake-2b" and "reasoning_effort" in body:  # a thinking-only endpoint
             self._send({"error": {"message": "Reasoning is mandatory", "code": 400}}, 400)
             return
-        assert body["response_format"]["json_schema"]["schema"]["additionalProperties"] is False
+        if "response_format" in body:  # absent only in the free-text experiment
+            assert body["response_format"]["json_schema"]["schema"]["additionalProperties"] is False
         system = body["messages"][0]["content"]
         user = body["messages"][1]["content"]
         if "copy editor" in system:
@@ -97,6 +98,11 @@ class FakeOllama(BaseHTTPRequestHandler):
                 out = {"text": sent}
             else:
                 out = {"text": f"{k} of {translit(sent)}{tag}"}
+            if "Earlier in this translator's work" in user:
+                out["text"] += " [ex: " + user.split("EN: ", 1)[1].split("\n", 1)[0] + "]"
+            if "response_format" not in body:  # free text, wrapped in the quotes models like to add
+                self._send({"choices": [{"message": {"content": f'"{out["text"]}"'}}]})
+                return
         self._send({"choices": [{"message": {"content": json.dumps(out)}}]})
 
     def _send(self, obj, status=200):
@@ -273,12 +279,14 @@ def test_eval_golden(tmp_path, monkeypatch):
         [
             {"chosen": "B", "preset": "p", "model": "m", "order": "CBA"},
             {"chosen": "A", "preset": "p", "model": "m"},
+            {"chosen": "A", "preset": "p", "model": "m", "blind": True, "seen": "A"},
         ]
     ) == {
         "letter": {"A": 1, "B": 1},
-        "preset p": {"A": 1, "B": 1},
-        "model m": {"A": 1, "B": 1},
+        "preset p": {"A": 2, "B": 1},
+        "model m": {"A": 2, "B": 1},
         "position": {1: 1},
+        "blind, saw A": {"A": 1},
     }
     assert ev.picks_summary(
         [
@@ -294,6 +302,16 @@ def test_eval_golden(tmp_path, monkeypatch):
     assert r["A"] == "A of Dva. [prev: One.]" and r["bad"] == {"A": 0, "B": 0, "C": 0}
     assert r["calls"] == 4  # the fake echoes the Russian at 0.8, so C was retried once
     ev.compare("t", "t")  # zero deltas, must not crash
+    # own examples: the nearest saved sentence by lemma overlap, never the sentence itself
+    assert r["examples"] == []  # nothing in the store is like "Два." except "Два." itself
+    (d / "translation.md").write_text("One. Two.\n\nThree.\n\nFour! Five.\n")  # the index follows the files
+    assert appmod.examples_for("Четыре?") == [{"ru": "Четыре.", "en": "Four!", "score": 1.0}]
+    assert appmod.examples_for("Четыре.") == []  # never the sentence itself
+    req = appmod.TranslateReq(model="fake-9b", sentence="Четыре?")
+    out = asyncio.run(appmod.translate(req))
+    assert out["A"] == "A of Chetyre? [ex: Four!]" and out["examples"][0]["en"] == "Four!"
+    monkeypatch.setattr(appmod, "FREE_TEXT", True)  # plain text comes back unquoted
+    assert asyncio.run(appmod.translate(req))["A"] == "A of Chetyre? [ex: Four!]"
 
 
 def test_patch_source_splits_and_realigns():
@@ -756,6 +774,26 @@ def test_e2e(page, server_url):
     page.click("#voices-btn")
     assert page.input_value("#voices-form textarea[name=description]") == "Short and dry."
     page.click("#voices-form .cancel")
+
+    # draft-blind: A alone, B and C behind a button; the pick records what was on screen
+    def set_blind(on):
+        page.click("#voices-btn")
+        page.set_checked("#voices-form input[name=blind]", on)
+        page.click("#voices-form button[value=ok]")
+        page.wait_for_function("!document.querySelector('#voices-dialog').open")
+
+    set_blind(True)
+    row0 = page.locator(".row").nth(0)
+    row0.locator(".sent .n").first.click()
+    row0.locator(".variant[data-k=A]").wait_for()
+    assert row0.locator(".variant[data-k=B]").is_hidden() and row0.locator(".reveal").is_visible()
+    row0.locator(".reveal").click()
+    assert row0.locator(".variant[data-k=B]").is_visible() and row0.locator(".reveal").count() == 0
+    with page.expect_response(lambda r: r.url.endswith("/api/pick")):
+        row0.locator(".variant[data-k=B]").click()
+    last = json.loads((STORE / "picks.jsonl").read_text().splitlines()[-1])
+    assert (last["blind"], last["seen"], last["order"][0], last["examples"]) == (True, "ABC", "A", [])
+    set_blind(False)
 
     # an edit made just before switching works is flushed, not lost
     page.click("#new-btn")

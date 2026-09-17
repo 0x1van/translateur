@@ -118,6 +118,7 @@ async def run(name: str, model: str, n: int, freedom: dict[str, float]) -> None:
                 "model": model,
                 "freedom": req.freedom,
                 **{k: out[k] for k in "ABC"},
+                "examples": out["examples"],
                 "bad": {
                     k: appmod.badness(out[k], it["ru"], [r["en"] for r in out["rejected"]])
                     for k in "ABC"
@@ -226,13 +227,22 @@ def compare(a: str, b: str, comet: bool = False) -> None:
 
 def picks_summary(picks: list[dict]) -> dict:
     """Letter distribution overall, per preset and per model, plus the position clicked when
-    the display order was logged: a letter that only wins on the left is a layout, not a voice."""
+    the display order was logged: a letter that only wins on the left is a layout, not a voice.
+    A draft-blind pick made with A alone on screen is not a vote among three, so it counts in
+    its own row, not in `letter`. With every card a full triple, the Plackett–Luce strengths are
+    the letter shares themselves; `picks` prints a Wilson interval on each."""
     by = defaultdict(Counter)
     for p in picks:
         if p.get("kind") == "analyse":  # edit-mode hunks: shown once, accepted on click
             by["analyse hunks"]["accepted" if p["accepted"] else "shown"] += len(p["hunks"])
             continue
-        by["letter"][p["chosen"]] += 1
+        seen = p.get("seen", "ABC")
+        if seen == "ABC":
+            by["letter"][p["chosen"]] += 1
+        if p.get("blind"):
+            by[f"blind, saw {seen}"][p["chosen"]] += 1
+        if p.get("examples"):
+            by["with examples"][p["chosen"]] += 1
         by[f"preset {p['preset']}"][p["chosen"]] += 1
         by[f"model {p['model']}"][p["chosen"]] += 1
         if "order" in p:
@@ -248,10 +258,12 @@ def picks() -> None:
     print(f"{len(rows)} picks")
     for name, counts in picks_summary(rows).items():
         total = counts["shown"] if name == "analyse hunks" else sum(counts.values())  # rate, not share
-        print(
-            f"{name:28}"
-            + "  ".join(f"{k}: {v} ({100 * v / total:.0f}%)" for k, v in counts.items())
-        )
+        cells = []
+        for k, v in counts.items():
+            lo, hi = wilson(v, total)
+            ci = f", {100 * lo:.0f}–{100 * hi:.0f}" if name == "letter" else ""
+            cells.append(f"{k}: {v} ({100 * v / total:.0f}%{ci})")
+        print(f"{name:28}" + "  ".join(cells))
 
 
 def main() -> None:

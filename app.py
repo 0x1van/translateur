@@ -10,13 +10,15 @@ one commit per save.
 import asyncio
 import difflib
 import json
+import math
 import os
 import re
 import subprocess
 import sys
 import threading
 import time
-from functools import cache
+from collections import Counter
+from functools import cache, lru_cache
 from pathlib import Path
 from typing import Literal
 
@@ -273,6 +275,9 @@ class Pick(BaseModel):
     variants: dict[str, str]  # A/B/C as shown
     order: str = "ABC"  # left-to-right display order, so position bias can be separated from voice
     chosen: str  # the letter clicked
+    blind: bool = False  # draft-blind reveal on: A alone first, B and C on request
+    seen: str = "ABC"  # the letters visible when the click came
+    examples: list[dict] = []  # the translator's own earlier renderings shown to the model
 
 
 class HunkLog(BaseModel):
@@ -527,20 +532,22 @@ class BadOutput(HTTPException):
 
 
 async def llm_json(
-    model: str, system: str, user: str, schema: dict, temperature: float, max_tokens: int
+    model: str, system: str, user: str, schema: dict | None, temperature: float, max_tokens: int
 ) -> dict:
-    """One structured-output chat call. `max_tokens` is a hard stop: a hot sample that starts
-    looping would otherwise generate until the context fills (and, on a local Ollama, queue every
-    later request behind it). Thinking is switched off."""
+    """One structured-output chat call (`schema` None: plain text, returned as {"text": ...}).
+    `max_tokens` is a hard stop: a hot sample that starts looping would otherwise generate until
+    the context fills (and, on a local Ollama, queue every later request behind it). Thinking is
+    switched off."""
     payload = {
         "model": model,
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
         "temperature": temperature,
         "max_tokens": max_tokens,
-        "response_format": {
-            "type": "json_schema",
-            "json_schema": {"name": "out", "strict": True, "schema": schema},
-        },
+        **(
+            {"response_format": {"type": "json_schema", "json_schema": {"name": "out", "strict": True, "schema": schema}}}
+            if schema
+            else {}
+        ),
         # OpenRouter and Ollama's /v1 both honour this; OpenRouter's own {"reasoning": {...}} form
         # makes Ollama think anyway and burn the token cap, so it is not sent by default
         **(_MINIMAL_REASONING if model in _NO_REASONING_FLAG else {"reasoning_effort": "none"}),
@@ -570,6 +577,11 @@ async def llm_json(
     if "error" in data:  # OpenRouter reports routing failures inside a 200
         raise HTTPException(502, f"model endpoint: {data['error']}")
     content = (data.get("choices") or [{}])[0].get("message", {}).get("content") or ""
+    if schema is None:  # free text: the reply is the answer, minus a pair of quotes around it all
+        t = content.strip()
+        if len(t) > 1 and t[0] == t[-1] == '"' and t.count('"') == 2:
+            t = t[1:-1]
+        return {"text": t}
     try:
         m = re.search(r"\{.*\}", content, re.DOTALL)  # tolerate prose around the object
         return json.loads(m.group(0) if m else content)
@@ -591,6 +603,57 @@ async def models() -> list[str]:
     except httpx.HTTPError as e:
         raise HTTPException(502, f"model endpoint unreachable at {LLM_BASE_URL}: {e}") from e
     return [m["id"] for m in r.json().get("data", [])]
+
+
+FREE_TEXT = os.environ.get("LLM_FREE_TEXT") == "1"  # experiment: the variant as plain text, no JSON
+OWN_EXAMPLES = os.environ.get("OWN_EXAMPLES", "1") != "0"  # kill switch for the retrieved examples
+
+
+def _own_index() -> tuple[list[tuple[str, str, set[str]]], dict[str, float]]:
+    """Every saved (Russian sentence, English sentence) pair from sentence-aligned paragraphs,
+    with the Russian's lemmas, plus each lemma's rarity across them. Rebuilt when a work changes."""
+    if not WORKS_DIR.exists():
+        return [], {}
+    return _own_index_at(tuple(sorted((str(p), p.stat().st_mtime) for p in WORKS_DIR.glob("*/*.md"))))
+
+
+@lru_cache(maxsize=1)
+def _own_index_at(_sig: tuple) -> tuple[list[tuple[str, str, set[str]]], dict[str, float]]:
+    pairs = []
+    for d in sorted(WORKS_DIR.iterdir()):
+        if not (d / "source.md").exists():
+            continue
+        w = load_work(d.name)
+        for block, en in zip(w["sentences"], w["translation"]):
+            en_sents = split_sentences(en) if en.strip() else []
+            if block and len(en_sents) == len(block):
+                pairs += [(ru, e, lexicon.lemmas(ru)) for ru, e in zip(block, en_sents)]
+    df = Counter(x for _, _, ls in pairs for x in ls)
+    return pairs, {x: math.log((1 + len(pairs)) / (1 + c)) for x, c in df.items()}
+
+
+def examples_for(sentence: str, n: int = 3, floor: float = 0.4) -> list[dict]:
+    """The translator's own earlier renderings of the sentences most like this one, best first:
+    cosine over lemmas weighted by rarity, so shared function words count for little and a long
+    saved sentence does not win by containing everything. The sentence itself is skipped, so a
+    golden-set run never sees its own reference."""
+    # ponytail: idf-weighted lemma cosine; embeddings if it misses paraphrases that matter
+    if not OWN_EXAMPLES:
+        return []
+    pairs, idf = _own_index()
+    top = math.log(1 + len(pairs))  # a lemma seen nowhere in the store
+    weight = lambda ls: math.sqrt(sum(idf.get(x, top) ** 2 for x in ls)) or 1.0
+    mine = lexicon.lemmas(sentence)
+    norm = weight(mine)
+    scored = sorted(
+        (
+            (sum(idf[x] ** 2 for x in mine & ls) / (norm * weight(ls)), ru, en)
+            for ru, en, ls in pairs
+            if ru != sentence
+        ),
+        reverse=True,
+    )
+    return [{"ru": ru, "en": en, "score": round(s, 2)} for s, ru, en in scored[:n] if s >= floor]
 
 
 class TranslateReq(BaseModel):
@@ -683,10 +746,19 @@ async def translate(req: TranslateReq) -> dict:
             else ""
         )
         + (f"Additional guidance from the translator: {req.guidance}\n" if req.guidance else "")
-        + 'Reply with JSON only: {"text": "..."}'
+        + (
+            "Reply with the translation only: no quotes around it, no commentary."
+            if FREE_TEXT
+            else 'Reply with JSON only: {"text": "..."}'
+        )
     )
     # ponytail: target goes last, inside delimiters — small models otherwise translate NEXT too
     user = ""
+    examples = examples_for(req.sentence)
+    if examples:
+        user += "Earlier in this translator's work (similar sentences; keep to their choices):\n" + "".join(
+            f"RU: {e['ru']}\nEN: {e['en']}\n" for e in examples
+        )
     if req.para_ru.strip() != req.sentence.strip():
         para = around(req.para_ru, req.sentence)
         user += f"Context — the paragraph it comes from (do not translate): {para}\n"
@@ -706,7 +778,7 @@ async def translate(req: TranslateReq) -> dict:
 
         async def sample(t: float) -> str:
             try:
-                out = await llm_json(req.model, system, ask, VARIANT_SCHEMA, t, cap)
+                out = await llm_json(req.model, system, ask, None if FREE_TEXT else VARIANT_SCHEMA, t, cap)
             except BadOutput:
                 return ""
             return str(out.get("text", "")).strip()
@@ -725,6 +797,7 @@ async def translate(req: TranslateReq) -> dict:
     return dict(await asyncio.gather(*(one(k) for k in "ABC"))) | {
         "glossary": glossary,
         "rejected": rejected,
+        "examples": examples,
     }
 
 
