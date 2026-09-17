@@ -118,7 +118,10 @@ async def run(name: str, model: str, n: int, freedom: dict[str, float]) -> None:
                 "model": model,
                 "freedom": req.freedom,
                 **{k: out[k] for k in "ABC"},
-                "bad": {k: appmod.badness(out[k], it["ru"]) for k in "ABC"},
+                "bad": {
+                    k: appmod.badness(out[k], it["ru"], [r["en"] for r in out["rejected"]])
+                    for k in "ABC"
+                },
                 "calls": calls[key(it)],
             }
             with path.open("a") as f:  # one writer per process; a line is atomic at this size

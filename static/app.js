@@ -145,8 +145,10 @@
      then it is the textarea. Every piece carries its offset so a click can place the caret. */
   const EN_TOK = /[A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё'’-]*|[^A-Za-zА-Яа-яЁё]+/g;
   const EN_BOUND = /([.!?…]["»”)]*)\s+(?=[«"“(]?[A-ZА-ЯЁ]|[—–-]\s+[«"“(]?[A-ZА-ЯЁ])/g;  // = split_sentences
+  // US spellings the model (or a tired translator) lets through; -ize is fine (Oxford), so not listed
+  const US = /^(?:(?:color|honor|humor|favor|favorite|behavior|neighbor|labor|harbor|rumor|savor|vigor|armor|endeavor|gray|center|theater|liter|fiber|somber|defense|offense|pretense|catalog|dialog|analyze|paralyze|pajamas|plow|mold|jewelry|skeptic|aluminum|mustache)(?:s|ed|ing|ful|less|ly|ness|ism|ist|al)?|(?:travel|cancel|marvel|model|fuel|label|signal|quarrel|counsel)(?:ed|ing|er|ers))$/i;
   const tok = (t, base) => [...t.matchAll(EN_TOK)].map(m =>
-    `<span${/^[A-Za-zА-Яа-яЁё]/.test(m[0]) ? ' class="w"' : ''} data-a="${base + m.index}">${esc(m[0])}</span>`).join('');
+    `<span${/^[A-Za-zА-Яа-яЁё]/.test(m[0]) ? ` class="w${US.test(m[0]) ? ' us' : ''}"` : ''} data-a="${base + m.index}">${esc(m[0])}</span>`).join('');
   function view(cell) {
     const v = $('textarea.tr', cell).value, p = $('p.en', cell), row = cell.closest('.row');
     if (!v.trim()) { p.innerHTML = '<span class="ph" data-a="0">…</span>'; return; }

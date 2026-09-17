@@ -537,8 +537,8 @@ async def llm_json(
                 del payload["reasoning_effort"]
                 r = await c.post(url, json=payload | _MINIMAL_REASONING, headers=headers)
             r.raise_for_status()
-        except httpx.HTTPError as e:
-            raise HTTPException(502, f"model endpoint: {e}") from e
+        except httpx.HTTPError as e:  # a timeout's str() is empty, hence the class name
+            raise HTTPException(502, f"model endpoint: {type(e).__name__} {e}") from e
     data = r.json()
     if os.environ.get("LLM_DEBUG"):  # raw choice, for a model that misbehaves on the real prompt
         print(json.dumps(data.get("choices"), ensure_ascii=False)[:600], file=sys.stderr)
@@ -624,12 +624,16 @@ def overruns(text: str, source: str) -> bool:
     return too_many or len(text) > 2.2 * len(source) + 40
 
 
-def badness(text: str, source: str) -> int:
+def badness(text: str, source: str, rejected: list[str] = ()) -> int:
     """0 = a plausible rendering. Higher = worse: empty, an echo of the Russian, stray Cyrillic,
-    or an overrun. Used to decide whether a calmer second sample should replace the first."""
+    an overrun, an under-run (something dropped), a term the translator has rejected. Used to
+    decide whether a calmer second sample should replace the first."""
     cyr = len(re.findall(r"[А-Яа-яЁё]", text))
     lat = len(re.findall(r"[A-Za-z]", text))
-    return 4 * (not text) + 2 * (cyr > lat) + (cyr > 0) + overruns(text, source)
+    # ponytail: length as an omission proxy; word-alignment coverage if it misses real drops
+    short = len(source) > 30 and len(text) < 0.4 * len(source)
+    banned = any(re.search(rf"\b{re.escape(r)}\b", text, re.IGNORECASE) for r in rejected)
+    return 4 * (not text) + 2 * (cyr > lat) + (cyr > 0) + overruns(text, source) + short + banned
 
 
 @app.post("/api/translate")
@@ -637,6 +641,7 @@ async def translate(req: TranslateReq) -> dict:
     """One model call per voice, in parallel, each at its own temperature; the system prompt is
     the same for all three, the user message names the voice."""
     glossary, rejected = glossary_for(req.preset, req.sentence)
+    banned = [r["en"] for r in rejected]
     voices = voices_for(req.preset)
     system = (
         system_prompt(req.description, voices)
@@ -682,12 +687,12 @@ async def translate(req: TranslateReq) -> dict:
             return str(out.get("text", "")).strip()
 
         text = await sample(temp)
-        bad = badness(text, req.sentence)
+        bad = badness(text, req.sentence, banned)
         for t in (min(temp, 0.4), 0.0):  # looped, echoed or riffing: retries never hotter
             if not bad:
                 break
             again = await sample(t)
-            bad2 = badness(again, req.sentence)
+            bad2 = badness(again, req.sentence, banned)
             if bad2 < bad or (bad2 == bad and len(again) < len(text)):
                 text, bad = again, bad2
         return k, text

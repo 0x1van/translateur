@@ -345,6 +345,8 @@ def test_badness_ranks_failures():
     assert appmod.badness(good, src) == 0
     assert appmod.badness("", src) > appmod.badness(src, src) > appmod.badness(riff, src) > 0
     assert appmod.badness("I was twenty-four тогда.", src) > appmod.badness(good, src)
+    assert appmod.badness("Twenty-four.", src) == 1  # far too short: something was dropped
+    assert appmod.badness(good, src, ["Twenty-Four"]) == 1 and appmod.badness(good, src, ["fourth"]) == 0
 
 
 def test_leaks_cyrillic():
@@ -603,6 +605,10 @@ def test_e2e(page, server_url):
     page.keyboard.press("Escape")  # leaves editing → view re-renders
     assert ta2.is_hidden() and en2.inner_text() == "5teh end."  # numbered 5, in step with the left
     assert not en2.evaluate("p => p.classList.contains('off')")  # 1 sentence vs "Конец.": aligned
+    en2.click()
+    ta2.fill("A gray, colorful theater; modeled, travelled.")
+    page.keyboard.press("Escape")
+    assert en2.locator(".us").all_inner_texts() == ["gray", "colorful", "theater", "modeled"]
     en2.click()
     ta2.fill("teh end. Really.")
     page.keyboard.press("Escape")

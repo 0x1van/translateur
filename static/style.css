@@ -177,6 +177,7 @@ textarea.src:focus { outline: none; }
 .variant small { font-family: var(--font-mono); font-size: 0.6rem; color: var(--color-text-muted); margin-right: 0.5rem; }
 .variants .current { margin: var(--space-xs) 0; font-size: 0.95rem; color: var(--color-text-muted); }
 .variants .current small { display: block; font-family: var(--font-mono); font-size: 0.6rem; letter-spacing: 0.06em; text-transform: uppercase; }
+p.en .us { text-decoration: underline dotted var(--color-error); text-underline-offset: 3px; }
 p.en .target { background: color-mix(in srgb, var(--color-accent) 35%, transparent); }
 .variants .glossary { font-family: var(--font-mono); font-size: 0.65rem; color: var(--color-text-muted); margin-top: var(--space-xs); }
 .thinking { font-family: var(--font-mono); font-size: 0.65rem; color: var(--color-text-muted); }
