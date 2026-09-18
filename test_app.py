@@ -1134,8 +1134,11 @@ def test_e2e(page, server_url):
         page.keyboard.press("Escape")
         assert en2.locator(".w").all_inner_texts() == ["the", "window"]
         en2.locator(".w", has_text="the").click()
-        page.wait_for_selector("#pop .alts .syn")
+        page.wait_for_selector("#pop .alts .ask")  # the model is asked only on request: a click costs money
         assert page.locator("#pop h4").inner_text() == "the"
+        assert page.locator("#pop .alts .syn").count() == 0
+        page.locator("#pop .alts .ask").click()
+        page.wait_for_selector("#pop .alts .syn")
         assert page.locator("#pop .alts .syn").all_inner_texts() == ["other the", "bold the"]
         page.keyboard.press("Escape")
         en2.locator(".w", has_text="window").click()
@@ -1148,12 +1151,18 @@ def test_e2e(page, server_url):
         assert ta2.input_value() == "the casement."
         page.wait_for_function("document.querySelector('#status').textContent.startsWith('saved')")
         assert en2.inner_text() == "5the casement."
-        # while editing: caret inside a word + mouseup also opens it; an llm chip replaces the word
+        # while editing: a bare caret click must NOT open it (placing the caret is not a question);
+        # a dragged selection does, and an llm chip then replaces the selection
         en2.click()
         ta2.evaluate("t => t.setSelectionRange(6, 6)")
         ta2.dispatch_event("mouseup")
-        page.wait_for_selector("#pop .alts .syn")
+        page.wait_for_timeout(200)
+        assert page.locator("#pop").is_hidden()
+        ta2.evaluate("t => t.setSelectionRange(4, 12)")
+        ta2.dispatch_event("mouseup")
+        page.wait_for_selector("#pop .alts .ask")
         assert page.locator("#pop h4").inner_text() == "casement"
+        page.locator("#pop .alts .ask").click()
         page.locator("#pop .alts .syn", has_text="bold casement").click()
         assert ta2.input_value() == "the bold casement."
         # the chip replacement must not leave a selection armed: the next variant lands by position,

@@ -535,7 +535,8 @@
   /* English pane, DeepL-style: click a word in the view, or click inside / select in the textarea → the model's
      alternatives for that span (sampled wild) + Moby's related words; click any to swap it in. */
   let altCtl;
-  grid.addEventListener('mouseup', e => { const ta = e.target.closest('textarea.tr'); if (ta) wordPop(ta, e.pageX, e.pageY); });
+  // a dragged selection is a question; a bare caret click is not, and must not open anything
+  grid.addEventListener('mouseup', e => { const ta = e.target.closest('textarea.tr'); if (ta && ta.selectionStart !== ta.selectionEnd) wordPop(ta, e.pageX, e.pageY); });
   async function wordPop(ta, x, y) {
     const v = ta.value, W = /[A-Za-z'’-]/;
     let a = ta.selectionStart, b = ta.selectionEnd;
@@ -543,8 +544,9 @@
     while (a < b && /\s/.test(v[a])) a++; while (b > a && /\s/.test(v[b - 1])) b--;
     const term = v.slice(a, b);
     if (!/[A-Za-z]/.test(term) || term.length < 2) { pop.hidden = true; return; }
-    showPop(`<h4>${esc(term)}</h4><span class="tag">alternatives · ${esc(modelSel.value)} · click to replace</span>
-      <section class="alts"><p class="thinking">thinking</p></section><section class="wn"></section><section class="moby"></section><section class="gl"></section>`, x, y);
+    altCtl?.abort();  // a model answer for the previous popup would land in a box that no longer exists
+    showPop(`<h4>${esc(term)}</h4><span class="tag">click to replace</span>
+      <section class="alts"><button type="button" class="ask">alternatives · ${esc(modelSel.value)}</button></section><section class="wn"></section><section class="moby"></section><section class="gl"></section>`, x, y);
     const alts = $('.alts', pop), wnBox = $('.wn', pop), moby = $('.moby', pop), glBox = $('.gl', pop);
     // glossary: the Russian sentence in the same position as the one the span sits in; its words as heads
     const i = +ta.closest('.row').dataset.i, j = enSpans(v).findIndex(s => a >= s.a && a < s.b);
@@ -563,15 +565,18 @@
       // Moby: one flat list over every sense of the word — folded away, for when the above runs dry
       if (t.synonyms.length) moby.innerHTML = `<details><summary class="tag">more · all senses, unsorted (Moby, ${t.synonyms.length})</summary>${chips(t.synonyms.slice(0, 120))}</details>`;
     }).catch(() => {});
-    altCtl?.abort();
-    const ctl = altCtl = new AbortController(), vc = currentVoice();
-    try {
-      const r = await api('/api/alternatives', { method: 'POST', signal: ctl.signal, body: {
-        slug: work.slug, model: modelSel.value, preset: vc.name, description: vc.description,
-        sentence: work.source[+ta.closest('.row').dataset.i], translation: v, start: a, end: b } });
-      refreshWorks().catch(() => {});
-      alts.innerHTML = r.alternatives.length ? chips(r.alternatives.map(toUK)) : '<p class="none">none ·</p>';
-    } catch (err) { if (err.name !== 'AbortError') alts.innerHTML = `<p class="none">${esc(err.message)}</p>`; }
+    // the model is asked only on request: every ask is a paid call, and most popups are for the free lists
+    $('.ask', alts).onclick = async () => {
+      alts.innerHTML = '<p class="thinking">thinking</p>';
+      const ctl = altCtl = new AbortController(), vc = currentVoice();
+      try {
+        const r = await api('/api/alternatives', { method: 'POST', signal: ctl.signal, body: {
+          slug: work.slug, model: modelSel.value, preset: vc.name, description: vc.description,
+          sentence: work.source[+ta.closest('.row').dataset.i], translation: v, start: a, end: b } });
+        refreshWorks().catch(() => {});
+        alts.innerHTML = r.alternatives.length ? chips(r.alternatives.map(toUK)) : '<p class="none">none ·</p>';
+      } catch (err) { if (err.name !== 'AbortError') alts.innerHTML = `<p class="none">${esc(err.message)}</p>`; }
+    };
   }
 
   // ---------- dialogs ----------
