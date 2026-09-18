@@ -38,7 +38,9 @@ app (web manifest + touch icon, no service worker: the server does the work, not
   lines separate paragraphs. The Russian stays editable: click past the words, retype or paste,
   click away; a paragraph split keeps its English with the first part.
 - **superscript number** on a sentence — voice A from the model; B and C each sit behind a
-  button in the card, one paid call apiece, so the common case costs one call, not three. Click
+  button in the card, one paid call apiece, so the common case costs one call, not three. Every
+  reply is kept in `store/cache/`: the same question (same text, context, style, voice, freedom)
+  is never paid for twice, so asking again is free until something changes. Click
   a variant to insert at the cursor / replace the selection / append. Type freely in the right
   pane; it autosaves to `works/<slug>/translation.md`. The model also sees up to three of your
   own earlier renderings of similar sentences from the store (lemma overlap; `OWN_EXAMPLES=0`

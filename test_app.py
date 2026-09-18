@@ -383,9 +383,15 @@ def test_cost_is_billed_to_the_work():
     asyncio.run(appmod.translate(appmod.TranslateReq(model="fake-9b", sentence="Раз.")))  # no slug: an eval
     assert (d / "cost").read_text() == "0.004"
     # the UI asks for A alone, then B or C on request: one call each, and only those keys come back
-    out = asyncio.run(appmod.translate(appmod.TranslateReq(slug="billed", model="fake-9b", sentence="Раз.", voices="A")))
+    out = asyncio.run(appmod.translate(appmod.TranslateReq(slug="billed", model="fake-9b", sentence="Два.", voices="A")))
     assert set(out) & set("ABC") == {"A"} and set(out["checks"]) == {"A"}
     assert (d / "cost").read_text() == "0.005"
+    # the same question again is read from store/cache, not paid for again
+    asyncio.run(appmod.translate(appmod.TranslateReq(slug="billed", model="fake-9b", sentence="Два.", voices="A")))
+    assert (d / "cost").read_text() == "0.005" and any(appmod.CACHE_DIR.glob("*.json"))
+    # "again" throws the kept answer away and pays for a new one
+    asyncio.run(appmod.translate(appmod.TranslateReq(slug="billed", model="fake-9b", sentence="Два.", voices="A", fresh=True)))
+    assert (d / "cost").read_text() == "0.006"
 
 
 def test_patch_blocks():
@@ -548,9 +554,9 @@ def test_style_block_and_prompt(monkeypatch):
     seen = []
     real = appmod.llm_json
 
-    async def spy(model, system, user, *a):
+    async def spy(model, system, user, *a, **kw):
         seen.append(system)
-        return await real(model, system, user, *a)
+        return await real(model, system, user, *a, **kw)
 
     monkeypatch.setattr(appmod, "llm_json", spy)
     req = appmod.TranslateReq(model="fake-9b", preset="demo", sentence="Жизнь прошла!")

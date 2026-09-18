@@ -10,6 +10,7 @@ one commit per save.
 import asyncio
 import contextvars
 import difflib
+import hashlib
 import io
 import json
 import math
@@ -39,6 +40,7 @@ HERE = Path(__file__).parent
 STORE_DIR = Path(os.environ.get("STORE_DIR", HERE / "store"))  # works + projects, one git repo
 WORKS_DIR = Path(os.environ.get("WORKS_DIR", STORE_DIR / "works"))
 PROJECTS_DIR = Path(os.environ.get("PROJECTS_DIR", STORE_DIR / "projects"))
+CACHE_DIR = STORE_DIR / "cache"  # every model reply, keyed by what the model saw: never paid for twice
 # OpenAI-compatible chat endpoint: OpenRouter when hosted, Ollama's /v1 at home
 LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "http://localhost:11434/v1").rstrip("/")
 LLM_API_KEY = os.environ.get("LLM_API_KEY", "")
@@ -967,10 +969,36 @@ class BadOutput(HTTPException):
 
 
 async def llm_json(
+    model: str,
+    system: str,
+    user: str,
+    schema: dict | None,
+    temperature: float,
+    max_tokens: int,
+    attempt: int = 0,
+    fresh: bool = False,
+) -> dict:
+    """One structured-output chat call (`schema` None: plain text, returned as {"text": ...}),
+    cached on disk by everything the model saw. A retry passes `attempt` so it is a fresh sample
+    and not the same bad answer read back; a second click at the same inputs costs nothing,
+    `fresh` throws the kept answer away and pays for a new one that replaces it."""
+    # ponytail: one file per call, never pruned; a sweep by mtime if the folder ever matters
+    key = json.dumps([model, system, user, schema, temperature, max_tokens, attempt], ensure_ascii=False)
+    f = CACHE_DIR / (hashlib.sha1(key.encode()).hexdigest() + ".json")
+    if fresh:
+        f.unlink(missing_ok=True)
+    if f.exists():
+        return json.loads(f.read_text())
+    out = await _llm_call(model, system, user, schema, temperature, max_tokens)
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    _atomic_write(f, json.dumps(out, ensure_ascii=False))
+    return out
+
+
+async def _llm_call(
     model: str, system: str, user: str, schema: dict | None, temperature: float, max_tokens: int
 ) -> dict:
-    """One structured-output chat call (`schema` None: plain text, returned as {"text": ...}).
-    `max_tokens` is a hard stop: a hot sample that starts looping would otherwise generate until
+    """`max_tokens` is a hard stop: a hot sample that starts looping would otherwise generate until
     the context fills (and, on a local Ollama, queue every later request behind it). Thinking is
     switched off."""
     payload = {
@@ -1104,6 +1132,7 @@ class TranslateReq(BaseModel):
     para_en: str = ""  # the English before it: this paragraph's so far, else the previous one's tail
     guidance: str = ""
     voices: str = "ABC"  # which of A/B/C to run; the UI asks for A, then B or C on request (a call each)
+    fresh: bool = False  # regenerate: drop the cached answer and pay for a new one
 
 
 def voices_for(preset_name: str) -> dict[str, str]:
@@ -1213,19 +1242,21 @@ async def translate(req: TranslateReq) -> dict:
         temp = req.freedom.get(k, DEFAULT_FREEDOM[k])
         cap = 80 + len(req.sentence)  # ≈ 3× the sentence's own tokens
 
-        async def sample(t: float) -> str:
+        async def sample(t: float, attempt: int = 0) -> str:
             try:
-                out = await llm_json(req.model, system, ask, None if FREE_TEXT else VARIANT_SCHEMA, t, cap)
+                out = await llm_json(
+                    req.model, system, ask, None if FREE_TEXT else VARIANT_SCHEMA, t, cap, attempt, req.fresh
+                )
             except BadOutput:
                 return ""
             return str(out.get("text", "")).strip()
 
         text = await sample(temp)
         bad = badness(text, req.sentence, banned, glossary)
-        for t in (min(temp, 0.4), 0.0):  # looped, echoed or riffing: retries never hotter
+        for i, t in enumerate((min(temp, 0.4), 0.0), 1):  # looped, echoed or riffing: retries never hotter
             if not bad:
                 break
-            again = await sample(t)
+            again = await sample(t, i)
             bad2 = badness(again, req.sentence, banned, glossary)
             if bad2 < bad or (bad2 == bad and len(again) < len(text)):
                 text, bad = again, bad2
@@ -1256,6 +1287,7 @@ class AltReq(BaseModel):
     translation: str  # the English draft
     start: int
     end: int  # span of the term inside `translation`
+    fresh: bool = False
 
 
 ALT_SCHEMA = _schema(
@@ -1291,7 +1323,7 @@ async def alternatives(req: AltReq) -> dict:
         f"ENGLISH DRAFT:\n{t[: req.start]}[[{term}]]{t[req.end :]}\n\n"
         f"Alternatives for [[{term}]]:"
     )
-    out = await llm_json(req.model, system, user, ALT_SCHEMA, 1.0, 160 + 8 * len(term))
+    out = await llm_json(req.model, system, user, ALT_SCHEMA, 1.0, 160 + 8 * len(term), fresh=req.fresh)
     seen = {term.strip().lower()}
     alts = []
     for a in out.get("alternatives", []):
@@ -1309,6 +1341,7 @@ class CheckReq(BaseModel):
     source: str = ""  # the Russian paragraph
     preset: str = ""  # for the glossary, edit mode only
     mode: Literal["grammar", "edit", "notes"] = "grammar"
+    fresh: bool = False
 
 
 def hunks(original: str, corrected: str) -> list[dict]:
@@ -1404,10 +1437,10 @@ async def check(req: CheckReq) -> dict:
     ) + f"ENGLISH TEXT:\n{req.text}"
     cap = 200 + len(req.text)
     if req.mode == "notes":
-        out = await llm_json(req.model, system, user, NOTES_SCHEMA, 0.0, cap)
+        out = await llm_json(req.model, system, user, NOTES_SCHEMA, 0.0, cap, fresh=req.fresh)
         return {"corrected": req.text, "issues": [], "notes": [str(n) for n in out["notes"] if n]}
     temp = 0.2 if req.mode == "grammar" else 0.0
-    out = await llm_json(req.model, system, user, CHECK_SCHEMA, temp, cap)
+    out = await llm_json(req.model, system, user, CHECK_SCHEMA, temp, cap, fresh=req.fresh)
     corrected = str(out.get("corrected", req.text)).strip("\n") or req.text
     corrected = respell(corrected, variant_of(req.preset))[0]
     notes = [str(n) for n in out.get("notes", []) if n]

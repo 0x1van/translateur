@@ -349,7 +349,7 @@
 
   /* One card per sentence. A is fetched on the click; B and C sit behind their own buttons, each
      a paid call, so the common case costs one call, not three. "again" reruns what is on screen. */
-  async function translateSentence(sent, guidance = '', voices = 'A') {
+  async function translateSentence(sent, guidance = '', voices = 'A', fresh = false) {  // fresh: past the server's cache
     const row = sent.closest('.row'), i = +row.dataset.i, j = +sent.dataset.j;
     grid.querySelectorAll('.sent.active, .row.active').forEach(el => el.classList.remove('active'));
     sent.classList.add('active'); row.classList.add('active');
@@ -367,7 +367,7 @@
     box.hidden = false;
     box.innerHTML = `<header><span>${esc(sent.querySelector('.n').textContent)} ·</span>
         <input class="guidance" placeholder="guidance, e.g. more archaic" value="${esc(guidance)}">
-        <button type="button" class="again">again</button><button type="button" class="close">close</button></header>` +
+        <button type="button" class="again" title="a fresh sample, paid for">again</button><button type="button" class="close">close</button></header>` +
       (target ? `<p class="current"><small>current · a variant replaces it</small>${esc(target.s)}</p>` : '') +
       '<div class="cards"></div>';
     const v = currentVoice();
@@ -376,7 +376,7 @@
     let error = '';
     const fetched = () => [...'ABC'].filter(k => k in out).join('');
     $('.close', box).onclick = () => { box.hidden = true; sent.classList.remove('active'); row.classList.remove('active'); highlightTarget(row, null); };
-    $('.again', box).onclick = () => translateSentence(sent, $('.guidance', box).value, fetched() || 'A');
+    $('.again', box).onclick = () => translateSentence(sent, $('.guidance', box).value, fetched() || 'A', true);
     $('.guidance', box).onkeydown = ev => { if (ev.key === 'Enter') translateSentence(sent, ev.target.value, fetched() || 'A'); };
     box.ctl?.abort();
     const ctl = box.ctl = new AbortController();
@@ -399,13 +399,13 @@
           variants: Object.fromEntries([...seen].map(x => [x, out[x]])), chosen: k, seen, examples: out.examples, checks: out.checks, glossary: out.glossary, rejected: out.rejected } }).catch(() => {});
       }; });
     }
-    async function ask(ks) {
+    async function ask(ks, fresh = false) {
       for (const k of ks) pending.add(k);
       error = ''; render();
       try {
         const r = await api('/api/translate', { method: 'POST', signal: ctl.signal, body: {
           slug: work.slug, model: modelSel.value, preset: v.name, description: v.description, freedom,
-          sentence: sents[j], para_ru: sents.join(' '), para_en, guidance, voices: ks } });
+          sentence: sents[j], para_ru: sents.join(' '), para_en, guidance, voices: ks, fresh } });
         refreshWorks().catch(() => {});  // the sidebar's £ moves with the bill
         for (const k of ks) { out[k] = toUK(r[k]); out.checks[k] = r.checks[k]; }
         Object.assign(out, { glossary: r.glossary, rejected: r.rejected, examples: r.examples });
@@ -413,7 +413,7 @@
       finally { for (const k of ks) pending.delete(k); }
       render();
     }
-    ask(voices);
+    ask(voices, fresh);
   }
 
   /* Insert a variant or dictionary chip where the translator last was: over the selection they
@@ -461,14 +461,14 @@
   function logHunks(row, hunks, accepted) {  // the analyse gate: accepted / shown
     api('/api/pick/analyse', { method: 'POST', body: { slug: work.slug, i: +row.dataset.i, model: modelSel.value, preset: presetSel.value, hunks, accepted } }).catch(() => {});
   }
-  async function review(row, mode) {
+  async function review(row, mode, fresh = false) {
     const ta = $('textarea.tr', row), out = $('.issues', row);
     if (!ta.value.trim()) return;
     out.innerHTML = `<p class="thinking">${mode === 'grammar' ? 'checking' : 'reading'}</p>`;
     out.dataset.mode = mode;
     try {
       const res = await api('/api/check', { method: 'POST', body: {
-        slug: work.slug, model: modelSel.value, text: ta.value, source: work.source[+row.dataset.i], preset: presetSel.value, mode } });
+        slug: work.slug, model: modelSel.value, text: ta.value, source: work.source[+row.dataset.i], preset: presetSel.value, mode, fresh } });
       refreshWorks().catch(() => {});
       const issues = res.issues || [], notes = res.notes || [];
       if (mode === 'edit' && issues.length) logHunks(row, issues.map(i => ({ quote: i.quote, fix: i.fix })), false);
@@ -477,6 +477,8 @@
           + `<p class="clean">${notes.map(esc).join(' · ')}</p><button type="button" class="apply-all">apply all</button>`
         : mode === 'notes' && notes.length ? notes.map(n => `<p class="note">${esc(n)}</p>`).join('')
         : `<p class="clean">${mode === 'grammar' ? 'no issues found' : 'nothing to add'} ·</p>`;
+      out.insertAdjacentHTML('beforeend', '<button type="button" class="again" title="a fresh pass, paid for">again</button>');
+      $('.again', out).onclick = () => review(row, mode, true);
       // apply all = each remaining hunk in turn, so edits made since the check survive
       const all = $('.apply-all', out);
       if (all) all.onclick = () => { out.querySelectorAll('.issue').forEach(applyIssue); out.innerHTML = ''; };
@@ -597,17 +599,20 @@
       if (t.synonyms.length) moby.innerHTML = `<details><summary class="tag">more · all senses, unsorted (Moby, ${t.synonyms.length})</summary>${chips(t.synonyms.slice(0, 120))}</details>`;
     }).catch(() => {});
     // the model is asked only on request: every ask is a paid call, and most popups are for the free lists
-    $('.ask', alts).onclick = async () => {
+    const askAlts = async fresh => {
       alts.innerHTML = '<p class="thinking">thinking</p>';
       const ctl = altCtl = new AbortController(), vc = currentVoice();
       try {
         const r = await api('/api/alternatives', { method: 'POST', signal: ctl.signal, body: {
           slug: work.slug, model: modelSel.value, preset: vc.name, description: vc.description,
-          sentence: work.source[+ta.closest('.row').dataset.i], translation: v, start: a, end: b } });
+          sentence: work.source[+ta.closest('.row').dataset.i], translation: v, start: a, end: b, fresh } });
         refreshWorks().catch(() => {});
-        alts.innerHTML = r.alternatives.length ? chips(r.alternatives.map(toUK)) : '<p class="none">none ·</p>';
+        alts.innerHTML = (r.alternatives.length ? chips(r.alternatives.map(toUK)) : '<p class="none">none ·</p>')
+          + ' <button type="button" class="ask again" title="a fresh set, paid for">again</button>';
+        $('.again', alts).onclick = () => askAlts(true);
       } catch (err) { if (err.name !== 'AbortError') alts.innerHTML = `<p class="none">${esc(err.message)}</p>`; }
     };
+    $('.ask', alts).onclick = () => askAlts(false);
   }
 
   // ---------- dialogs ----------
