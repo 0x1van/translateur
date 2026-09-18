@@ -312,11 +312,9 @@ class Pick(BaseModel):
     freedom: dict[str, float] = {}
     sentence: str  # the Russian sentence
     guidance: str = ""
-    variants: dict[str, str]  # A/B/C as shown
-    order: str = "ABC"  # left-to-right display order, so position bias can be separated from voice
+    variants: dict[str, str]  # the voices that were on screen
     chosen: str  # the letter clicked
-    blind: bool = False  # draft-blind reveal on: A alone first, B and C on request
-    seen: str = "ABC"  # the letters visible when the click came
+    seen: str = "ABC"  # the letters visible when the click came: A alone until B or C is asked for
     examples: list[dict] = []  # the translator's own earlier renderings shown to the model
     checks: dict = {}  # per voice, what the code checks saw (spelling fixed, glossary missed, …)
     glossary: list[dict] = []  # the terms and rejected terms that reached the prompt
@@ -1105,6 +1103,7 @@ class TranslateReq(BaseModel):
     para_ru: str = ""  # the whole paragraph the sentence sits in
     para_en: str = ""  # the English before it: this paragraph's so far, else the previous one's tail
     guidance: str = ""
+    voices: str = "ABC"  # which of A/B/C to run; the UI asks for A, then B or C on request (a call each)
 
 
 def voices_for(preset_name: str) -> dict[str, str]:
@@ -1169,9 +1168,12 @@ def badness(text: str, source: str, rejected: list[str] = (), glossary: list[dic
 
 @app.post("/api/translate")
 async def translate(req: TranslateReq) -> dict:
-    """One model call per voice, in parallel, each at its own temperature; the system prompt is
-    the same for all three, the user message names the voice."""
+    """One model call per voice asked for, in parallel, each at its own temperature; the system
+    prompt is the same for all, the user message names the voice."""
     _COST_SLUG.set(req.slug)
+    ks = [k for k in "ABC" if k in req.voices]
+    if not ks:
+        raise HTTPException(400, "no voice asked for")
     block = style_block(req.preset, req.sentence)
     glossary, rejected = block["glossary"], block["rejected"]
     banned = [r["en"] for r in rejected]
@@ -1236,7 +1238,7 @@ async def translate(req: TranslateReq) -> dict:
         }
         return k, text, checks
 
-    done = await asyncio.gather(*(one(k) for k in "ABC"))
+    done = await asyncio.gather(*(one(k) for k in ks))
     return {k: text for k, text, _ in done} | {
         "glossary": glossary,
         "rejected": rejected,

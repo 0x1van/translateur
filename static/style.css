@@ -174,18 +174,17 @@ textarea.src:focus { outline: none; }
 .variants header { display: flex; gap: var(--space-sm); align-items: center; flex-wrap: wrap;
   font-family: var(--font-mono); font-size: 0.65rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-text-muted); }
 .variants header input { flex: 1; min-width: 8rem; font-size: 0.75rem; text-transform: none; letter-spacing: 0; }
-.variant {
+.variant, .variants .ask {  /* .ask: a voice not yet fetched, one paid call behind the button */
   display: block; width: 100%; text-align: left; text-transform: none; letter-spacing: 0;
   font-family: var(--font-serif); font-size: 1rem; line-height: 1.6; border: 0; padding: 0.3rem 0; margin: 0;
   border-bottom: 1px dotted var(--color-border);
 }
-.variant:hover:not(:disabled) { box-shadow: none; background: var(--color-accent); }
+.variant:hover:not(:disabled), .variants .ask:hover { box-shadow: none; background: var(--color-accent); }
 .variant:disabled { cursor: default; }
-.variant[hidden] { display: none; }
-.variants .reveal { margin: var(--space-xs) 0; }
-.variant b { font-family: var(--font-mono); font-size: 0.65rem; margin-right: 0.5rem; color: var(--color-text); }
+.variants .ask, .variants .thinking { color: var(--color-text-muted); }
+.variant b, .variants .ask b, .variants .thinking b { font-family: var(--font-mono); font-size: 0.65rem; margin-right: 0.5rem; color: var(--color-text); }
 .variant .none { color: var(--color-text-muted); font-size: 0.9rem; }
-.variant small { font-family: var(--font-mono); font-size: 0.6rem; color: var(--color-text-muted); margin-right: 0.5rem; }
+.variant small, .variants .ask small, .variants .thinking small { font-family: var(--font-mono); font-size: 0.6rem; color: var(--color-text-muted); margin-right: 0.5rem; }
 .variants .current { margin: var(--space-xs) 0; font-size: 0.95rem; color: var(--color-text-muted); }
 .variants .current small { display: block; font-family: var(--font-mono); font-size: 0.6rem; letter-spacing: 0.06em; text-transform: uppercase; }
 p.en .us, p.en .pn { text-decoration: underline dotted var(--color-error); text-underline-offset: 3px; }

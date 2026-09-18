@@ -37,12 +37,12 @@ app (web manifest + touch icon, no service worker: the server does the work, not
 - **new** — slug, project, optional title; then paste the Russian into the left pane. Blank
   lines separate paragraphs. The Russian stays editable: click past the words, retype or paste,
   click away; a paragraph split keeps its English with the first part.
-- **superscript number** on a sentence — three variants (A/B/C) from the model; click one to
-  insert at the cursor / replace the selection / append. Type freely in the right pane; it
-  autosaves to `works/<slug>/translation.md`. The model also sees up to three of your own
-  earlier renderings of similar sentences from the store (lemma overlap; `OWN_EXAMPLES=0` turns
-  it off); they are logged with the pick. Project settings can switch on **draft-blind**: A alone
-  first, B and C behind a button, so you commit to a reading before the choices anchor you.
+- **superscript number** on a sentence — voice A from the model; B and C each sit behind a
+  button in the card, one paid call apiece, so the common case costs one call, not three. Click
+  a variant to insert at the cursor / replace the selection / append. Type freely in the right
+  pane; it autosaves to `works/<slug>/translation.md`. The model also sees up to three of your
+  own earlier renderings of similar sentences from the store (lemma overlap; `OWN_EXAMPLES=0`
+  turns it off); they are logged with the pick, as is which voices were on screen when you chose.
 - **click a Russian word** — dictionary (lemma, grammar, WikDict senses; click a translation to insert it) plus Russian near-synonyms (WikDict round trip ru→en→ru).
 - **English pane** — a rendered view with hoverable words until you click into it to type (click past a word, or Escape to leave). Sentences are numbered in step with the Russian; the numbers turn red when a paragraph's sentence counts differ. **Click a word** (or select a phrase while editing; placing the caret opens nothing) — one popover: WordNet synonyms grouped by sense, Moby's flat all-senses list folded behind *more*, and a button that asks the model for alternatives for that span (contextual, sampled wild) — a model call is never made until you press it; click any to swap it in.
 - **⋯ menu** at the corner of each English paragraph, one model pass per item: **check grammar**

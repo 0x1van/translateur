@@ -41,7 +41,7 @@
     const saved = JSON.parse(localStorage.getItem(voiceKey(p.name)) || 'null');
     const freedom = { ...DEFAULT_FREEDOM, ...(saved?.freedom || {}) };
     for (const k in freedom) if (!(freedom[k] in FREEDOM)) freedom[k] = 'free';  // e.g. the retired 'wild'
-    return { name: p.name, description: p.description, voices: p.voices, conventions: p.conventions || {}, freedom, blind: !!saved?.blind };
+    return { name: p.name, description: p.description, voices: p.voices, conventions: p.conventions || {}, freedom };
   }
 
   // ---------- boot ----------
@@ -335,7 +335,9 @@
     if (e.target.matches('.n') && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); translateSentence(e.target.closest('.sent')); }
   });
 
-  async function translateSentence(sent, guidance = '') {
+  /* One card per sentence. A is fetched on the click; B and C sit behind their own buttons, each
+     a paid call, so the common case costs one call, not three. "again" reruns what is on screen. */
+  async function translateSentence(sent, guidance = '', voices = 'A') {
     const row = sent.closest('.row'), i = +row.dataset.i, j = +sent.dataset.j;
     grid.querySelectorAll('.sent.active, .row.active').forEach(el => el.classList.remove('active'));
     sent.classList.add('active'); row.classList.add('active');
@@ -354,35 +356,52 @@
     box.innerHTML = `<header><span>${esc(sent.querySelector('.n').textContent)} ·</span>
         <input class="guidance" placeholder="guidance, e.g. more archaic" value="${esc(guidance)}">
         <button type="button" class="again">again</button><button type="button" class="close">close</button></header>` +
-      (target ? `<p class="current"><small>current · a variant replaces it</small>${esc(target.s)}</p>` : '') + `
-      <p class="thinking">translating with ${esc(modelSel.value)}</p>`;
-    $('.close', box).onclick = () => { box.hidden = true; sent.classList.remove('active'); row.classList.remove('active'); highlightTarget(row, null); };
-    $('.again', box).onclick = () => translateSentence(sent, $('.guidance', box).value);
-    $('.guidance', box).onkeydown = ev => { if (ev.key === 'Enter') translateSentence(sent, ev.target.value); };
+      (target ? `<p class="current"><small>current · a variant replaces it</small>${esc(target.s)}</p>` : '') +
+      '<div class="cards"></div>';
     const v = currentVoice();
     const freedom = Object.fromEntries(Object.entries(v.freedom).map(([k, name]) => [k, FREEDOM[name] ?? FREEDOM.free]));
+    const cards = $('.cards', box), out = { glossary: [], rejected: [], examples: [], checks: {} }, pending = new Set();
+    let error = '';
+    const fetched = () => [...'ABC'].filter(k => k in out).join('');
+    $('.close', box).onclick = () => { box.hidden = true; sent.classList.remove('active'); row.classList.remove('active'); highlightTarget(row, null); };
+    $('.again', box).onclick = () => translateSentence(sent, $('.guidance', box).value, fetched() || 'A');
+    $('.guidance', box).onkeydown = ev => { if (ev.key === 'Enter') translateSentence(sent, ev.target.value, fetched() || 'A'); };
     box.ctl?.abort();
     const ctl = box.ctl = new AbortController();
-    try {
-      const out = await api('/api/translate', { method: 'POST', signal: ctl.signal, body: {
-        slug: work.slug, model: modelSel.value, preset: v.name, description: v.description, freedom,
-        sentence: sents[j], para_ru: sents.join(' '), para_en, guidance } });
-      refreshWorks().catch(() => {});  // the sidebar's £ moves with the bill
-      for (const k of 'ABC') out[k] = toUK(out[k]);
-      // shuffled per card: a pick then says which voice won, not which button was leftmost.
-      // draft-blind: A alone first, B and C behind a button; the pick logs what was on screen
-      const blind = v.blind;
-      let seen = blind ? 'A' : 'ABC';
-      const order = blind ? 'A' + (Math.random() < 0.5 ? 'BC' : 'CB') : ['ABC', 'ACB', 'BAC', 'BCA', 'CAB', 'CBA'][Math.floor(Math.random() * 6)];
-      $('.thinking', box).outerHTML = [...order].map(k =>
-        `<button type="button" class="variant" data-k="${k}"${blind && k !== 'A' ? ' hidden' : ''}><b>${k}</b><small>${esc((v.voices[k] || '').split(':')[0])} · ${esc(v.freedom[k])}</small>${out[k] ? esc(out[k]) : '<i class="none">no usable output · try again</i>'}</button>`).join('') +
-        (blind ? '<button type="button" class="reveal">show B and C</button>' : '') +
+    const head = k => `<b>${k}</b><small>${esc((v.voices[k] || '').split(':')[0])} · ${esc(v.freedom[k])}</small>`;
+    function render() {
+      cards.innerHTML = [...'ABC'].map(k =>
+        pending.has(k) ? `<p class="thinking">${head(k)}translating with ${esc(modelSel.value)}</p>`
+        : !(k in out) ? `<button type="button" class="ask" data-k="${k}">${head(k)}ask ${esc(modelSel.value)}</button>`
+        : `<button type="button" class="variant" data-k="${k}"${out[k] ? '' : ' disabled'}>${head(k)}${out[k] ? esc(out[k]) : '<i class="none">no usable output · try again</i>'}</button>`).join('') +
+        (error ? `<p class="clean">${esc(error)}</p>` : '') +
         (out.glossary.length || out.rejected.length ? `<p class="glossary">${
           out.glossary.map(g => `${esc(g.ru)} → ${esc(g.en)}`).join(' · ')}${
           out.rejected.map(r => ` · not “${esc(r.en)}”`).join('')}</p>` : '');
-      if (blind) $('.reveal', box).onclick = ev => { ev.target.remove(); box.querySelectorAll('.variant[hidden]').forEach(b => { b.hidden = false; }); seen = 'ABC'; };
-      box.querySelectorAll('.variant').forEach(b => { if (out[b.dataset.k]) b.onclick = () => { insert(row, out[b.dataset.k], target, slot); api('/api/pick', { method: 'POST', body: { slug: work.slug, i, j, model: modelSel.value, preset: v.name, freedom, sentence: sents[j], guidance, variants: { A: out.A, B: out.B, C: out.C }, order, chosen: b.dataset.k, blind, seen, examples: out.examples, checks: out.checks, glossary: out.glossary, rejected: out.rejected } }).catch(() => {}); }; else b.disabled = true; });
-    } catch (e) { if (e.name !== 'AbortError') $('.thinking', box).outerHTML = `<p class="clean">${esc(e.message)}</p>`; }
+      cards.querySelectorAll('.ask').forEach(b => { b.onclick = () => ask(b.dataset.k); });
+      // the pick logs what was on screen: which voices, and their texts
+      cards.querySelectorAll('.variant:not(:disabled)').forEach(b => { b.onclick = () => {
+        const k = b.dataset.k, seen = fetched();
+        insert(row, out[k], target, slot);
+        api('/api/pick', { method: 'POST', body: { slug: work.slug, i, j, model: modelSel.value, preset: v.name, freedom, sentence: sents[j], guidance,
+          variants: Object.fromEntries([...seen].map(x => [x, out[x]])), chosen: k, seen, examples: out.examples, checks: out.checks, glossary: out.glossary, rejected: out.rejected } }).catch(() => {});
+      }; });
+    }
+    async function ask(ks) {
+      for (const k of ks) pending.add(k);
+      error = ''; render();
+      try {
+        const r = await api('/api/translate', { method: 'POST', signal: ctl.signal, body: {
+          slug: work.slug, model: modelSel.value, preset: v.name, description: v.description, freedom,
+          sentence: sents[j], para_ru: sents.join(' '), para_en, guidance, voices: ks } });
+        refreshWorks().catch(() => {});  // the sidebar's £ moves with the bill
+        for (const k of ks) { out[k] = toUK(r[k]); out.checks[k] = r.checks[k]; }
+        Object.assign(out, { glossary: r.glossary, rejected: r.rejected, examples: r.examples });
+      } catch (e) { if (e.name === 'AbortError') return; error = e.message; }
+      finally { for (const k of ks) pending.delete(k); }
+      render();
+    }
+    ask(voices);
   }
 
   /* Insert a variant or dictionary chip where the translator last was: over the selection they
@@ -617,7 +636,6 @@
   $('#voices-btn').onclick = () => {
     const v = currentVoice();
     for (const k of ['A', 'B', 'C']) voicesForm.elements[k + '_freedom'].value = v.freedom[k];
-    voicesForm.elements.blind.checked = v.blind;
     voicesForm.elements.description.value = v.description;
     $('.export', voicesForm).href = '/api/projects/' + encodeURIComponent(v.name) + '/export.zip';
     voicesDlg.showModal();
@@ -625,12 +643,11 @@
   $('.reset', voicesForm).onclick = () => {  // freedom back to defaults; the description stays yours
     localStorage.removeItem(voiceKey(presetSel.value));
     for (const k of ['A', 'B', 'C']) voicesForm.elements[k + '_freedom'].value = DEFAULT_FREEDOM[k];
-    voicesForm.elements.blind.checked = false;
   };
   voicesForm.onsubmit = async e => {
     e.preventDefault();
     const f = e.target.elements, name = presetSel.value;
-    localStorage.setItem(voiceKey(name), JSON.stringify({ freedom: { A: f.A_freedom.value, B: f.B_freedom.value, C: f.C_freedom.value }, blind: f.blind.checked }));
+    localStorage.setItem(voiceKey(name), JSON.stringify({ freedom: { A: f.A_freedom.value, B: f.B_freedom.value, C: f.C_freedom.value } }));
     try {
       await api('/api/projects/' + encodeURIComponent(name), { method: 'PUT', body: { description: f.description.value } });
       presets.find(p => p.name === name).description = f.description.value.trim();

@@ -253,27 +253,21 @@ def compare(a: str, b: str, comet: bool = False) -> None:
 
 
 def picks_summary(picks: list[dict]) -> dict:
-    """Letter distribution overall, per preset and per model, plus the position clicked when
-    the display order was logged: a letter that only wins on the left is a layout, not a voice.
-    A draft-blind pick made with A alone on screen is not a vote among three, so it counts in
-    its own row, not in `letter`. With every card a full triple, the Plackett–Luce strengths are
-    the letter shares themselves; `picks` prints a Wilson interval on each."""
+    """Letter distribution overall, per preset and per model. A pick made with fewer than three
+    voices on screen (A alone until B or C is asked for) is not a vote among three, so it counts
+    in its own `saw` row, not in `letter`. With every card a full triple, the Plackett–Luce
+    strengths are the letter shares themselves; `picks` prints a Wilson interval on each."""
     by = defaultdict(Counter)
     for p in picks:
         if p.get("kind") == "analyse":  # edit-mode hunks: shown once, accepted on click
             by["analyse hunks"]["accepted" if p["accepted"] else "shown"] += len(p["hunks"])
             continue
         seen = p.get("seen", "ABC")
-        if seen == "ABC":
-            by["letter"][p["chosen"]] += 1
-        if p.get("blind"):
-            by[f"blind, saw {seen}"][p["chosen"]] += 1
+        by["letter" if seen == "ABC" else f"saw {seen}"][p["chosen"]] += 1
         if p.get("examples"):
             by["with examples"][p["chosen"]] += 1
         by[f"preset {p['preset']}"][p["chosen"]] += 1
         by[f"model {p['model']}"][p["chosen"]] += 1
-        if "order" in p:
-            by["position"][p["order"].index(p["chosen"])] += 1
     return {k: dict(sorted(v.items())) for k, v in by.items()}
 
 

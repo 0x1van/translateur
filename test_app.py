@@ -276,13 +276,11 @@ def test_picks_are_logged_and_committed():
         preset="plain",
         sentence="Да.",
         variants={"A": "Yes.", "B": "Yea.", "C": "Aye."},
-        order="CBA",
         chosen="B",
     )
     appmod.log_pick(pick)
     line = json.loads((STORE / "picks.jsonl").read_text().splitlines()[-1])
     assert line["chosen"] == "B" and line["variants"]["C"] == "Aye." and line["at"] > 0
-    assert line["order"] == "CBA"
     log = subprocess.run(
         ["git", "log", "-1", "--format=%s", "--", "picks.jsonl"],
         cwd=STORE,
@@ -321,16 +319,15 @@ def test_eval_golden(tmp_path, monkeypatch):
     assert ev.wilson(0, 0) == (0, 0) and [round(x, 2) for x in ev.wilson(50, 100)] == [0.4, 0.6]
     assert ev.picks_summary(
         [
-            {"chosen": "B", "preset": "p", "model": "m", "order": "CBA"},
+            {"chosen": "B", "preset": "p", "model": "m"},
             {"chosen": "A", "preset": "p", "model": "m"},
-            {"chosen": "A", "preset": "p", "model": "m", "blind": True, "seen": "A"},
+            {"chosen": "A", "preset": "p", "model": "m", "seen": "A"},
         ]
     ) == {
         "letter": {"A": 1, "B": 1},
         "preset p": {"A": 2, "B": 1},
         "model m": {"A": 2, "B": 1},
-        "position": {1: 1},
-        "blind, saw A": {"A": 1},
+        "saw A": {"A": 1},
     }
     assert ev.picks_summary(
         [
@@ -385,6 +382,10 @@ def test_cost_is_billed_to_the_work():
     assert appmod.load_work("billed")["cost"] == round(0.004 * appmod.GBP_PER_USD, 4)
     asyncio.run(appmod.translate(appmod.TranslateReq(model="fake-9b", sentence="Раз.")))  # no slug: an eval
     assert (d / "cost").read_text() == "0.004"
+    # the UI asks for A alone, then B or C on request: one call each, and only those keys come back
+    out = asyncio.run(appmod.translate(appmod.TranslateReq(slug="billed", model="fake-9b", sentence="Раз.", voices="A")))
+    assert set(out) & set("ABC") == {"A"} and set(out["checks"]) == {"A"}
+    assert (d / "cost").read_text() == "0.005"
 
 
 def test_patch_blocks():
@@ -807,8 +808,15 @@ def test_e2e(page, server_url):
 
     # sentence → three variants → pick B → lands in the paired pane and is saved
     page.locator(".row").nth(0).locator(".n").nth(0).click()
-    page.wait_for_selector(".variant")
-    vt = {k: page.locator(f".variant[data-k={k}]").inner_text() for k in "ABC"}  # order is shuffled
+    page.wait_for_selector(".variant[data-k=A]")
+    # A alone is fetched; B and C are each one click (one paid call) away, and in a fixed order
+    assert page.locator(".variant").count() == 1 and page.locator(".variants .ask").count() == 2
+    page.locator(".variants .ask[data-k=C]").click()
+    page.wait_for_selector(".variant[data-k=C]")
+    page.locator(".variants .ask[data-k=B]").click()
+    page.wait_for_selector(".variant[data-k=B]")
+    assert [b.get_attribute("data-k") for b in page.locator(".variant").all()] == ["A", "B", "C"]
+    vt = {k: page.locator(f".variant[data-k={k}]").inner_text() for k in "ABC"}
     assert vt["A"].endswith("A of On sidel u okna. (glossed)")  # glossary reached the prompt
     assert "Literal (control) · strict" in vt["A"] and "free" in vt["C"]  # voice · freedom
     assert vt["C"].endswith("C of On sidel u okna.")  # the echoed Russian was retried cooler
@@ -837,6 +845,8 @@ def test_e2e(page, server_url):
     page.wait_for_selector(".variant")
     # "English so far" for sentence 2 is the English of sentence 1, not the paragraph's tail
     assert page.locator(".variant[data-k=A]").inner_text().endswith("[prev: idel u okna.]")
+    page.locator(".variants .ask[data-k=C]").click()
+    page.wait_for_selector(".variant[data-k=C]")
     page.locator(".variant[data-k=C]").click()
     assert ta.input_value() == "B of On sidel u okna. C of Zhizn proshla!"
     # a selection made while editing is replaced by the next variant, even though the click blurs
@@ -852,6 +862,8 @@ def test_e2e(page, server_url):
     assert page.locator(".row").nth(0).locator("p.en .target").count() > 0
     page.locator(".variant[data-k=A]").click()
     assert ta.input_value() == "A of On sidel u okna. (glossed) C of Zhizn proshla!"
+    page.locator(".variants .ask[data-k=B]").click()
+    page.wait_for_selector(".variant[data-k=B]")
     page.locator(".variant[data-k=B]").click()
     assert ta.input_value() == "B of On sidel u okna. C of Zhizn proshla!"
     # an explicit selection still wins over the positional target
@@ -870,6 +882,8 @@ def test_e2e(page, server_url):
     )
     _edit(page, 0)
     ta.evaluate("t => t.setSelectionRange(5, 9)")  # "word"
+    page.locator(".variants .ask[data-k=C]").click()  # asking for a voice keeps the selection armed
+    page.wait_for_selector(".variant[data-k=C]")
     page.locator(".variant[data-k=C]").click()
     assert ta.input_value() == "Take C of On sidel u okna., then."
     ta.evaluate(
@@ -1058,25 +1072,23 @@ def test_e2e(page, server_url):
     assert page.input_value("#voices-form textarea[name=description]") == "Short and dry."
     page.click("#voices-form .cancel")
 
-    # draft-blind: A alone, B and C behind a button; the pick records what was on screen
-    def set_blind(on):
-        page.click("#voices-btn")
-        page.set_checked("#voices-form input[name=blind]", on)
-        page.click("#voices-form button[value=ok]")
-        page.wait_for_function("!document.querySelector('#voices-dialog').open")
-
-    set_blind(True)
+    # A alone on a click, B and C on request (draft-blind is no longer a setting: it is the only
+    # mode); the pick records which voices were on screen and only those variants
+    assert page.locator("#voices-form input[name=blind]").count() == 0
     row0 = page.locator(".row").nth(0)
     row0.locator(".sent .n").first.click()
     row0.locator(".variant[data-k=A]").wait_for()
-    assert row0.locator(".variant[data-k=B]").is_hidden() and row0.locator(".reveal").is_visible()
-    row0.locator(".reveal").click()
-    assert row0.locator(".variant[data-k=B]").is_visible() and row0.locator(".reveal").count() == 0
+    with page.expect_response(lambda r: r.url.endswith("/api/pick")):
+        row0.locator(".variant[data-k=A]").click()
+    last = json.loads((STORE / "picks.jsonl").read_text().splitlines()[-1])
+    assert (last["seen"], list(last["variants"]), last["examples"]) == ("A", ["A"], [])
+    assert "blind" not in last and "order" not in last
+    row0.locator(".variants .ask[data-k=B]").click()
+    row0.locator(".variant[data-k=B]").wait_for()
     with page.expect_response(lambda r: r.url.endswith("/api/pick")):
         row0.locator(".variant[data-k=B]").click()
     last = json.loads((STORE / "picks.jsonl").read_text().splitlines()[-1])
-    assert (last["blind"], last["seen"], last["order"][0], last["examples"]) == (True, "ABC", "A", [])
-    set_blind(False)
+    assert (last["seen"], list(last["variants"])) == ("AB", ["A", "B"])
 
     # an edit made just before switching works is flushed, not lost
     page.click("#new-btn")
@@ -1179,6 +1191,8 @@ def test_e2e(page, server_url):
         page.locator(".row").nth(2).locator(".variant[data-k=A]").click()
         assert ta2.input_value() == "A of Konets."
         # a voice with no usable output is shown as such and cannot insert (or delete) anything
+        page.locator(".row").nth(2).locator(".variants .ask[data-k=C]").click()
+        page.wait_for_selector(".row:nth-child(3) .variant[data-k=C]")
         c = page.locator(".row").nth(2).locator(".variant[data-k=C]")
         assert "no usable output" in c.inner_text() and c.is_disabled()
         c.click(force=True)
