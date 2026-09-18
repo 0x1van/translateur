@@ -34,6 +34,18 @@
   };
   applyTheme(localStorage.getItem('theme'));
 
+  const shell = document.getElementById('shell');
+  const treeBtn = document.getElementById('tree-btn');
+  function applyTree(hidden) {
+    shell.classList.toggle('no-tree', hidden);
+    treeBtn.setAttribute('aria-expanded', String(!hidden));
+  }
+  treeBtn.onclick = () => {
+    const hidden = !shell.classList.contains('no-tree');
+    localStorage.setItem('tree:hidden', hidden ? '1' : ''); applyTree(hidden);
+  };
+  applyTree(!!localStorage.getItem('tree:hidden'));
+
   // ---------- project: description lives on the server; freedom per browser ----------
   const voiceKey = name => 'voices:' + name;
   function currentVoice() {

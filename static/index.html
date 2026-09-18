@@ -18,6 +18,7 @@
 <body>
 <header class="bar">
   <a class="brand" href="/" title="translateur"><img src="/static/icon-192.png" alt="translateur"></a>
+  <button id="tree-btn" type="button" title="show or hide the works panel" aria-label="Toggle works panel" aria-controls="works">&#9776;&#xFE0E;</button>
   <label>project <select id="preset"></select></label>
   <button id="voices-btn" type="button" title="project settings" aria-label="project settings">&#9881;&#xFE0E;</button>
   <button id="copy-btn" type="button" title="copy the whole English text">copy english</button>
@@ -26,7 +27,7 @@
   <span id="status" class="status" aria-live="polite"></span>
 </header>
 
-<div class="shell">
+<div class="shell" id="shell">
   <aside class="tree" aria-label="Works">
     <div class="tree-head"><h2>works</h2><button id="new-btn" type="button" title="new work or project">+ new</button></div>
     <ul id="works"></ul>

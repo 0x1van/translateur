@@ -59,7 +59,8 @@ select, input { border: 1px solid var(--color-border); background: var(--color-b
 }
 .bar label { display: flex; align-items: center; gap: var(--space-xs); color: var(--color-text-muted); }
 .bar select { font-size: 0.7rem; text-transform: none; letter-spacing: 0; max-width: 14rem; }
-.brand { margin-right: auto; display: flex; }
+.brand { display: flex; }
+#tree-btn { margin-right: auto; font-size: 1rem; line-height: 1; padding: 0.15rem 0.5rem; }
 .brand img { width: 1.5rem; height: 1.5rem; border-radius: 4px; }
 #voices-btn { font-size: 1rem; line-height: 1; padding: 0.15rem 0.5rem; }
 .status { color: var(--color-text-muted); min-width: 6rem; text-align: right; }
@@ -67,6 +68,8 @@ select, input { border: 1px solid var(--color-border); background: var(--color-b
 
 /* ---- shell: work tree | grid ---- */
 .shell { display: grid; grid-template-columns: 17rem 1fr; min-height: calc(100vh - 3rem); }
+.shell.no-tree { grid-template-columns: 1fr; }
+.shell.no-tree .tree { display: none; }
 .tree {
   border-right: 1px solid var(--color-border); padding: var(--space-lg) var(--space-sm) var(--space-lg) var(--space-md);
   font-family: var(--font-mono); font-size: 0.7rem; letter-spacing: 0.06em;

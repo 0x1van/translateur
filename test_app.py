@@ -787,6 +787,14 @@ def test_e2e(page, server_url):
     assert page.locator("#works .work-item.active .t").inner_text() == "Demo · I"
     assert page.locator("#works .work-item.active .prog").inner_text() == "0/3"
     assert page.input_value("#preset") == "demo"
+    # the works panel folds away behind the bar button and stays folded across a reload
+    page.click("#tree-btn")
+    assert not page.locator(".tree").is_visible()
+    page.reload()
+    page.wait_for_selector(".row")
+    assert not page.locator(".tree").is_visible()
+    page.click("#tree-btn")
+    assert page.locator(".tree").is_visible()
     assert (WORKS / "demo-work" / "source.md").read_text().startswith("---\nproject: demo\ntitle:")
     assert page.locator(".row").count() == 3
     assert page.locator(".sent").count() == 5
